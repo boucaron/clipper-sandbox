@@ -1,8 +1,8 @@
 /*******************************************************************************
 *                                                                              *
 * Author    :  Angus Johnson                                                   *
-* Version   :  4.1.0 (beta)                                                    *
-* Date      :  1 April 2011                                                    *
+* Version   :  4.1.1 (beta)                                                    *
+* Date      :  5 April 2011                                                    *
 * Website   :  http://www.angusj.com                                           *
 * Copyright :  Angus Johnson 2010-2011                                         *
 *                                                                              *
@@ -23,33 +23,33 @@
 *                                                                              *
 *******************************************************************************/
 
-#ifndef clipper4_hpp
-#define clipper4_hpp
+#ifndef clipper_hpp
+#define clipper_hpp
 
 #include <vector>
 #include <stdexcept>
 #include <cstring>
 #include <cstdlib>
 
-namespace clipper4 {
+namespace clipper {
 
 enum ClipType { ctIntersection, ctUnion, ctDifference, ctXor };
 enum PolyType { ptSubject, ptClip };
 enum PolyFillType { pftEvenOdd, pftNonZero };
 
+typedef signed long long long64;
+
 struct IntPoint {
-  int X;
-  int Y;
-  IntPoint(int x = 0, int y = 0): X(x), Y(y) {};
+  long64 X;
+  long64 Y;
+  IntPoint(long64 x = 0, long64 y = 0): X(x), Y(y) {};
 };
 
 typedef std::vector< IntPoint > Polygon;
 typedef std::vector< Polygon > Polygons;
 
-typedef signed long long long64;
-
 bool IsClockwise(const Polygon &poly);
-float Area(const Polygon &poly);
+double Area(const Polygon &poly);
 Polygons OffsetPolygons(const Polygons &pts, const float &delta);
 
 //used internally ...
@@ -57,14 +57,14 @@ enum EdgeSide { esLeft, esRight };
 enum IntersectProtects { ipNone = 0, ipLeft = 1, ipRight = 2, ipBoth = 3 };
 
 struct TEdge4 {
-  int xbot;
-  int ybot;
-  int xcurr;
-  int ycurr;
-  int xtop;
-  int ytop;
+  long64 xbot;
+  long64 ybot;
+  long64 xcurr;
+  long64 ycurr;
+  long64 xtop;
+  long64 ytop;
   double dx;
-  int tmpX;
+  long64 tmpX;
   PolyType polyType;
   EdgeSide side;
   int windDelta; //1 or -1 depending on winding direction
@@ -88,14 +88,14 @@ struct IntersectNode {
 };
 
 struct LocalMinima {
-  int           Y;
+  long64          Y;
   TEdge4        *leftBound;
   TEdge4        *rightBound;
   LocalMinima  *next;
 };
 
 struct Scanbeam {
-  int       Y;
+  long64       Y;
   Scanbeam *next;
 };
 
@@ -120,7 +120,7 @@ struct HorzJoinRec {
   int       savedIdx;
 };
 
-struct IntRect { int left; int top; int right; int bottom; };
+struct IntRect { long64 left; long64 top; long64 right; long64 bottom; };
 
 typedef std::vector < PolyPt* > PolyPtList;
 typedef std::vector < TEdge4* > EdgeList;
@@ -130,11 +130,11 @@ typedef std::vector < HorzJoinRec* > HorzJoinList;
 //ClipperBase is the ancestor to the Clipper class. It should not be
 //instantiated directly. This class simply abstracts the conversion of sets of
 //polygon coordinates into edge objects that are stored in a LocalMinima list.
-class Clipper4Base
+class ClipperBase
 {
 public:
-  Clipper4Base();
-  virtual ~Clipper4Base();
+  ClipperBase();
+  virtual ~ClipperBase();
   void AddPolygon(const Polygon &pg, PolyType polyType);
   void AddPolygons( const Polygons &ppg, PolyType polyType);
   virtual void Clear();
@@ -151,11 +151,11 @@ private:
   EdgeList               m_edges;
 };
 
-class Clipper4 : public virtual Clipper4Base
+class Clipper : public virtual ClipperBase
 {
 public:
-  Clipper4();
-  ~Clipper4();
+  Clipper();
+  ~Clipper();
   bool Execute(ClipType clipType,
     Polygons &solution,
     PolyFillType subjFillType = pftEvenOdd,
@@ -178,9 +178,9 @@ private:
   void SetWindingCount(TEdge4& edge);
   bool IsNonZeroFillType(const TEdge4& edge) const;
   bool IsNonZeroAltFillType(const TEdge4& edge) const;
-  void InsertScanbeam(const int Y);
-  int PopScanbeam();
-  void InsertLocalMinimaIntoAEL(const int botY);
+  void InsertScanbeam(const long64 Y);
+  long64 PopScanbeam();
+  void InsertLocalMinimaIntoAEL(const long64 botY);
   void InsertEdgeIntoAEL(TEdge4 *edge);
   void AddEdgeToSEL(TEdge4 *edge);
   void CopyAELToSEL();
@@ -189,9 +189,9 @@ private:
   void UpdateEdgeIntoAEL(TEdge4 *&e);
   void SwapPositionsInSEL(TEdge4 *edge1, TEdge4 *edge2);
   bool IsContributing(const TEdge4& edge) const;
-  bool IsTopHorz(const int XPos);
+  bool IsTopHorz(const long64 XPos);
   void SwapPositionsInAEL(TEdge4 *edge1, TEdge4 *edge2);
-  void DoMaxima(TEdge4 *e, int topY);
+  void DoMaxima(TEdge4 *e, long64 topY);
   void ProcessHorizontals();
   void ProcessHorizontal(TEdge4 *horzEdge);
   void AddLocalMaxPoly(TEdge4 *e1, TEdge4 *e2, const IntPoint &pt);
@@ -204,11 +204,11 @@ private:
     const IntPoint &pt, IntersectProtects protects);
   PolyPt* AddPolyPt(TEdge4 *e, const IntPoint &pt);
   void DisposeAllPolyPts();
-  bool ProcessIntersections( const int topY);
+  bool ProcessIntersections( const long64 topY);
   void AddIntersectNode(TEdge4 *e1, TEdge4 *e2, const IntPoint &pt);
-  void BuildIntersectList(const int topY);
+  void BuildIntersectList(const long64 topY);
   void ProcessIntersectList();
-  void ProcessEdgesAtTopOfScanbeam(const int topY);
+  void ProcessEdgesAtTopOfScanbeam(const long64 topY);
   void BuildResult(Polygons& polypoly);
   void DisposeIntersectNodes();
   bool FixupIntersections();
@@ -224,12 +224,12 @@ private:
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
 
-class clipper4Exception : public std::exception
+class clipperException : public std::exception
 {
   public:
-    clipper4Exception(const char* description)
+    clipperException(const char* description)
       throw(): std::exception(), m_description (description) {}
-    virtual ~clipper4Exception() throw() {}
+    virtual ~clipperException() throw() {}
     virtual const char* what() const throw() {return m_description.c_str();}
   private:
     std::string m_description;
@@ -237,7 +237,7 @@ class clipper4Exception : public std::exception
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
 
-} //clipper4 namespace
-#endif //clipper4_hpp
+} //clipper namespace
+#endif //clipper_hpp
 
 

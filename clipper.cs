@@ -1,8 +1,8 @@
 ﻿/*******************************************************************************
 *                                                                              *
 * Author    :  Angus Johnson                                                   *
-* Version   :  4.1.0 (beta)                                                    *
-* Date      :  1 April 2011                                                    *
+* Version   :  4.1.1 (beta)                                                    *
+* Date      :  5 April 2011                                                    *
 * Website   :  http://www.angusj.com                                           *
 * Copyright :  Angus Johnson 2010-2011                                         *
 *                                                                              *
@@ -33,16 +33,16 @@
 using System;
 using System.Collections.Generic;
 
-namespace Clipper4
+namespace clipper
 {
     using Polygon = List<IntPoint>;
     using Polygons = List<List<IntPoint>>;
 
     public class IntPoint
     {
-        public int X { get; set; }
-        public int Y { get; set; }
-        public IntPoint(int X = 0, int Y = 0)
+        public Int64 X { get; set; }
+        public Int64 Y { get; set; }
+        public IntPoint(Int64 X = 0, Int64 Y = 0)
         {
             this.X = X; this.Y = Y;
         }
@@ -50,11 +50,11 @@ namespace Clipper4
 
     public class IntRect
     {
-        public int left { get; set; }
-        public int top { get; set; }
-        public int right { get; set; }
-        public int bottom { get; set; }
-        public IntRect(int l = 0, int t = 0, int r = 0, int b = 0)
+        public Int64 left { get; set; }
+        public Int64 top { get; set; }
+        public Int64 right { get; set; }
+        public Int64 bottom { get; set; }
+        public IntRect(Int64 l = 0, Int64 t = 0, Int64 r = 0, Int64 b = 0)
         {
             this.left = l; this.top = t;
             this.right = r; this.bottom = b;
@@ -73,14 +73,14 @@ namespace Clipper4
     internal enum Protects { ipNone = 0, ipLeft = 1, ipRight = 2, ipBoth = 3 };
 
     internal class TEdge4 {
-        public int xbot;
-        public int ybot;
-        public int xcurr;
-        public int ycurr;
-        public int xtop;
-        public int ytop;
+        public Int64 xbot;
+        public Int64 ybot;
+        public Int64 xcurr;
+        public Int64 ycurr;
+        public Int64 xtop;
+        public Int64 ytop;
         public double dx;
-        public int tmpX;
+        public Int64 tmpX;
         public PolyType polyType;
         public EdgeSide side;
         public int windDelta; //1 or -1 depending on winding direction
@@ -106,7 +106,7 @@ namespace Clipper4
 
     internal class LocalMinima
     {
-        public int Y;
+        public Int64 Y;
         public TEdge4 leftBound;
         public TEdge4 rightBound;
         public LocalMinima next;
@@ -114,7 +114,7 @@ namespace Clipper4
 
     internal class Scanbeam
     {
-        public int Y;
+        public Int64 Y;
         public Scanbeam next;
     };
 
@@ -228,6 +228,10 @@ namespace Clipper4
             int j = 0;
             for (int i = 1; i < len; ++i)
             {
+                const Int64 MaxInt = 1500000000; //~ Sqrt(2^63)/2 -> 1.5Billion
+                if (Math.Abs(pg[i].X) > MaxInt || Math.Abs(pg[i].Y) > MaxInt)
+                    throw new ClipperException("Integer exceeds range bounds");
+                
                 if (PointsEqual(p[j], pg[i])) continue;
                 else if (j > 0 && SlopesEqual(p[j-1], p[j], pg[i]))
                 {
@@ -559,7 +563,7 @@ namespace Clipper4
         }
         //------------------------------------------------------------------------------
 
-        private void InsertScanbeam(int Y)
+        private void InsertScanbeam(Int64 Y)
         {
           if( m_Scanbeam == null )
           {
@@ -603,12 +607,12 @@ namespace Clipper4
             m_ClipFillType = clipFillType;
             m_ClipType = clipType;
 
-            int botY = PopScanbeam();
+            Int64 botY = PopScanbeam();
             do {
               InsertLocalMinimaIntoAEL(botY);
               m_HorizJoins.Clear();
               ProcessHorizontals();
-              int topY = PopScanbeam();
+              Int64 topY = PopScanbeam();
               succeeded = ProcessIntersections(topY);
               if (succeeded) ProcessEdgesAtTopOfScanbeam(topY);
               botY = topY;
@@ -631,9 +635,9 @@ namespace Clipper4
         }
         //------------------------------------------------------------------------------
 
-        private int PopScanbeam()
+        private Int64 PopScanbeam()
         {
-          int Y = m_Scanbeam.Y;
+          Int64 Y = m_Scanbeam.Y;
           Scanbeam sb2 = m_Scanbeam;
           m_Scanbeam = m_Scanbeam.next;
           sb2 = null;
@@ -686,7 +690,7 @@ namespace Clipper4
         }
         //------------------------------------------------------------------------------
 
-        private void InsertLocalMinimaIntoAEL(int botY)
+        private void InsertLocalMinimaIntoAEL(Int64 botY)
         {
           while(  m_CurrentLM != null  && ( m_CurrentLM.Y == botY ) )
           {
@@ -1580,7 +1584,7 @@ namespace Clipper4
         private void ProcessHorizontal(TEdge4 horzEdge)
         {
             Direction Direction;
-            int horzLeft, horzRight;
+            Int64 horzLeft, horzRight;
 
             if (horzEdge.xcurr < horzEdge.xtop)
             {
@@ -1723,7 +1727,7 @@ namespace Clipper4
         }
         //------------------------------------------------------------------------------
 
-        private bool ProcessIntersections(int topY)
+        private bool ProcessIntersections(Int64 topY)
         {
           if( m_ActiveEdges == null ) return true;
           try {
@@ -1741,7 +1745,7 @@ namespace Clipper4
         }
         //------------------------------------------------------------------------------
 
-        private void BuildIntersectList(int topY)
+        private void BuildIntersectList(Int64 topY)
         {
           if ( m_ActiveEdges == null ) return;
 
@@ -1844,13 +1848,13 @@ namespace Clipper4
         }
         //------------------------------------------------------------------------------
 
-        private static int Round(double value)
+        private static Int64 Round(double value)
         {
-            if ((value < 0)) return (int)(value - 0.5); else return (int)(value + 0.5);
+            if ((value < 0)) return (Int64)(value - 0.5); else return (Int64)(value + 0.5);
         }
         //------------------------------------------------------------------------------
 
-        private static int TopX(TEdge4 edge, int currentY)
+        private static Int64 TopX(TEdge4 edge, Int64 currentY)
         {
             if (currentY == edge.ytop)
                 return edge.xtop;
@@ -1858,7 +1862,7 @@ namespace Clipper4
         }
         //------------------------------------------------------------------------------
 
-        private int TopX(IntPoint pt1, IntPoint pt2, int currentY)
+        private Int64 TopX(IntPoint pt1, IntPoint pt2, Int64 currentY)
         {
           //preconditions: pt1.Y <> pt2.Y and pt1.Y > pt2.Y
           if (currentY >= pt1.Y) return pt1.X;
@@ -1867,7 +1871,7 @@ namespace Clipper4
           else
           {
             double q = (pt1.X-pt2.X)/(pt1.Y-pt2.Y);
-            return (int)(pt1.X + (currentY - pt1.Y) *q);
+            return (Int64)(pt1.X + (currentY - pt1.Y) * q);
           }
         }
         //------------------------------------------------------------------------------
@@ -1986,7 +1990,7 @@ namespace Clipper4
         }
         //------------------------------------------------------------------------------
 
-        private void ProcessEdgesAtTopOfScanbeam(int topY)
+        private void ProcessEdgesAtTopOfScanbeam(Int64 topY)
         {
           TEdge4 e = m_ActiveEdges;
           while( e != null )
@@ -2043,10 +2047,10 @@ namespace Clipper4
         }
         //------------------------------------------------------------------------------
 
-        private void DoMaxima(TEdge4 e, int topY)
+        private void DoMaxima(TEdge4 e, Int64 topY)
         {
           TEdge4 eMaxPair = GetMaximaPair(e);
-          int X = e.xtop;
+          Int64 X = e.xtop;
           TEdge4 eNext = e.nextInAEL;
           while( eNext != eMaxPair )
           {
@@ -2287,7 +2291,7 @@ namespace Clipper4
           double a = a1;
           for (int i = 0; i < steps; ++i)
           {
-            result.Add(new IntPoint(pt.X + (int)(Math.Cos(a)*r), pt.Y + (int)(Math.Sin(a)*r)));
+              result.Add(new IntPoint(pt.X + Round(Math.Cos(a) * r), pt.Y + Round(Math.Sin(a) * r)));
             a += da;
           }
           return result;
@@ -2337,14 +2341,14 @@ namespace Clipper4
             for (int i = 0; i < highI; ++i)
             {
               pg.Add(new IntPoint(Round(pts[j][i].X + delta *normals[i].X),
-                (int)(pts[j][i].Y + delta *normals[i].Y)));
+                Round(pts[j][i].Y + delta *normals[i].Y)));
               pg.Add(new IntPoint(Round(pts[j][i].X + delta * normals[i + 1].X),
-                (int)(pts[j][i].Y + delta *normals[i+1].Y)));
+                Round(pts[j][i].Y + delta *normals[i+1].Y)));
             }
             pg.Add(new IntPoint(Round(pts[j][highI].X + delta * normals[highI].X),
-              (int)(pts[j][highI].Y + delta *normals[highI].Y)));
+              Round(pts[j][highI].Y + delta *normals[highI].Y)));
             pg.Add(new IntPoint(Round(pts[j][highI].X + delta * normals[0].X),
-              (int)(pts[j][highI].Y + delta *normals[0].Y)));
+              Round(pts[j][highI].Y + delta *normals[0].Y)));
 
             //round off reflex angles (ie > 180 deg) unless it's almost flat (ie < 10deg angle) ...
             //cross product normals < 0 . reflex angle; dot product normals == 1 . no angle
@@ -2398,7 +2402,7 @@ namespace Clipper4
         //------------------------------------------------------------------------------
 
 
-    } //Clipper4
+    } //clipper namespace
   
     class ClipperException : Exception
     {

@@ -1,10 +1,10 @@
-unit clipper4;
+unit clipper;
 
 (*******************************************************************************
 *                                                                              *
 * Author    :  Angus Johnson                                                   *
-* Version   :  4.1.0 (beta)                                                    *
-* Date      :  1 April 2011                                                    *
+* Version   :  4.1.1                                                           *
+* Date      :  5 April 2011                                                    *
 * Website   :  http://www.angusj.com                                           *
 * Copyright :  Angus Johnson 2010-2011                                         *
 *                                                                              *
@@ -40,6 +40,8 @@ uses
 
 type
 
+  TIntPoint = record X, Y: int64; end;
+
   TClipType = (ctIntersection, ctUnion, ctDifference, ctXor);
   TPolyType = (ptSubject, ptClip);
   TPolyFillType = (pftEvenOdd, pftNonZero);
@@ -57,18 +59,18 @@ type
   TIntersectProtect = (ipLeft, ipRight);
   TIntersectProtects = set of TIntersectProtect;
   TDirection = (dRightToLeft, dLeftToRight);
-  TArrayOfPoint = array of TPoint;
+  TArrayOfPoint = array of TIntPoint;
   TArrayOfArrayOfPoint = array of TArrayOfPoint;
 
   PEdge = ^TEdge;
   TEdge = record
-    xbot : integer;  //bottom
-    ybot : integer;
-    xcurr: integer;  //current (ie relative to bottom of current scanbeam)
-    ycurr: integer;
-    xtop : integer;  //top
-    ytop : integer;
-    tmpX :  integer;
+    xbot : int64;  //bottom
+    ybot : int64;
+    xcurr: int64;  //current (ie relative to bottom of current scanbeam)
+    ycurr: int64;
+    xtop : int64;  //top
+    ytop : int64;
+    tmpX :  int64;
     dx   : double;   //the inverse of slope
     polyType : TPolyType;
     side     : TEdgeSide;
@@ -90,7 +92,7 @@ type
 
   PScanbeam = ^TScanbeam;
   TScanbeam = record
-    y   : integer;
+    y   : int64;
     next: PScanbeam;
   end;
 
@@ -98,13 +100,13 @@ type
   TIntersectNode = record
     edge1: PEdge;
     edge2: PEdge;
-    pt   : TPoint;
+    pt   : TIntPoint;
     next : PIntersectNode;
   end;
 
   PLocalMinima = ^TLocalMinima;
   TLocalMinima = record
-    y         : integer;
+    y         : int64;
     leftBound : PEdge;
     rightBound: PEdge;
     next      : PLocalMinima;
@@ -112,7 +114,7 @@ type
 
   PPolyPt = ^TPolyPt;
   TPolyPt = record
-    pt     : TPoint;
+    pt     : TIntPoint;
     next   : PPolyPt;
     prev   : PPolyPt;
     isHole : boolean;
@@ -120,11 +122,11 @@ type
 
   PJoinRec = ^TJoinRec;
   TJoinRec = record
-    pt1a     : TPoint;
-    pt1b     : TPoint;
+    pt1a     : TIntPoint;
+    pt1b     : TIntPoint;
     poly1Idx : integer;
-    pt2a     : TPoint;
-    pt2b     : TPoint;
+    pt2a     : TIntPoint;
+    pt2b     : TIntPoint;
     poly2Idx : integer;
     next     : PJoinRec;
     prev     : PJoinRec;
@@ -140,7 +142,7 @@ type
 
 type
 
-  TClipperBase4 = class
+  TClipperBase = class
   private
     fEdgeList      : TList;
     fLmList        : PLocalMinima; //localMinima list
@@ -158,7 +160,7 @@ type
     procedure Clear; virtual;
   end;
 
-  TClipper4 = class(TClipperBase4)
+  TClipper = class(TClipperBase)
   private
     fPolyPtList    : TList;
     fClipType      : TClipType;
@@ -172,36 +174,36 @@ type
     fJoins         : PJoinRec;
     fHorizJoin     : PHorzRec;
     procedure DisposeScanbeamList;
-    procedure InsertScanbeam(const y: integer);
-    function PopScanbeam: integer;
+    procedure InsertScanbeam(const y: int64);
+    function PopScanbeam: int64;
     procedure SetWindingCount(edge: PEdge);
     function IsNonZeroFillType(edge: PEdge): boolean;
     function IsNonZeroAltFillType(edge: PEdge): boolean;
     procedure AddEdgeToSEL(edge: PEdge);
     procedure CopyAELToSEL;
-    procedure InsertLocalMinimaIntoAEL(const botY: integer);
+    procedure InsertLocalMinimaIntoAEL(const botY: int64);
     procedure SwapPositionsInAEL(e1, e2: PEdge);
     procedure SwapPositionsInSEL(e1, e2: PEdge);
-    function IsTopHorz(const XPos: integer): boolean;
+    function IsTopHorz(const XPos: int64): boolean;
     procedure ProcessHorizontal(horzEdge: PEdge);
     procedure ProcessHorizontals;
-    procedure AddIntersectNode(e1, e2: PEdge; const pt: TPoint);
-    function ProcessIntersections(const topY: integer): boolean;
-    procedure BuildIntersectList(const topY: integer);
+    procedure AddIntersectNode(e1, e2: PEdge; const pt: TIntPoint);
+    function ProcessIntersections(const topY: int64): boolean;
+    procedure BuildIntersectList(const topY: int64);
     procedure ProcessIntersectList;
     procedure DeleteFromAEL(e: PEdge);
     procedure DeleteFromSEL(e: PEdge);
     procedure IntersectEdges(e1,e2: PEdge;
-      const pt: TPoint; protects: TIntersectProtects = []);
-    procedure DoMaxima(e: PEdge; const topY: integer);
+      const pt: TIntPoint; protects: TIntersectProtects = []);
+    procedure DoMaxima(e: PEdge; const topY: int64);
     procedure UpdateEdgeIntoAEL(var e: PEdge);
     function FixupIntersections: boolean;
     procedure SwapIntersectNodes(int1, int2: PIntersectNode);
-    procedure ProcessEdgesAtTopOfScanbeam(const topY: integer);
+    procedure ProcessEdgesAtTopOfScanbeam(const topY: int64);
     function IsContributing(edge: PEdge): boolean;
-    function AddPolyPt(e: PEdge; const pt: TPoint): PPolyPt;
-    procedure AddLocalMaxPoly(e1, e2: PEdge; const pt: TPoint);
-    procedure AddLocalMinPoly(e1, e2: PEdge; const pt: TPoint);
+    function AddPolyPt(e: PEdge; const pt: TIntPoint): PPolyPt;
+    procedure AddLocalMaxPoly(e1, e2: PEdge; const pt: TIntPoint);
+    procedure AddLocalMinPoly(e1, e2: PEdge; const pt: TIntPoint);
     procedure AppendPolygon(e1, e2: PEdge);
     procedure DisposePolyPts(pp: PPolyPt);
     procedure DisposeAllPolyPts;
@@ -229,7 +231,7 @@ function IsClockwise(const pts: TArrayOfPoint): boolean;
 function Area(const pts: TArrayOfPoint): double;
 function OffsetPolygons(const pts: TArrayOfArrayOfPoint;
   const delta: single): TArrayOfArrayOfPoint;
-function PointInPolygon(const pt: TPoint; const pts: TArrayOfPoint): Boolean;
+function PointInPolygon(const pt: TIntPoint; const pts: TArrayOfPoint): Boolean;
 
 function FloatPointsToPoint(const a: TArrayOfFloatPoint;
   decimals: integer = 2): TArrayOfPoint; overload;
@@ -257,6 +259,7 @@ resourcestring
   rsDoMaxima = 'DoMaxima error';
   rsUpdateEdgeIntoAEL = 'UpdateEdgeIntoAEL error';
   rsHorizontal = 'ProcessHorizontal error';
+  rsInvalidInt = 'Integer exceeds range bounds';
 
 //------------------------------------------------------------------------------
 // Miscellaneous Functions ...
@@ -332,7 +335,20 @@ end;
 //------------------------------------------------------------------------------
 {$ENDIF}
 
-function GetAngle(const pt1, pt2: TPoint): double;
+function PointsEqual(const P1, P2: TIntPoint): Boolean; overload;
+begin
+  Result := (P1.X = P2.X) and (P1.Y = P2.Y);
+end;
+//------------------------------------------------------------------------------
+
+function IntPoint(const X, Y: Int64): TIntPoint;
+begin
+  Result.X := X;
+  Result.Y := Y;
+end;
+//------------------------------------------------------------------------------
+
+function GetAngle(const pt1, pt2: TIntPoint): double;
 begin
   if (pt1.Y = pt2.Y) then
   begin
@@ -353,9 +369,9 @@ begin
   highI := high(pts);
   if highI < 2 then exit;
   //or ...(x2-x1)(y2+y1)
-  area := int64(pts[highI].x) * pts[0].y - int64(pts[0].x) * pts[highI].y;
+  area := (pts[highI].x) * pts[0].y - (pts[0].x) * pts[highI].y;
   for i := 0 to highI-1 do
-    area := area + int64(pts[i].x) * pts[i+1].y - int64(pts[i+1].x) * pts[i].y;
+    area := area + (pts[i].x) * pts[i+1].y - (pts[i+1].x) * pts[i].y;
   //area := area/2;
   result := area > 0; //ie reverse of normal formula because Y axis inverted
 end;
@@ -368,21 +384,21 @@ begin
   result := 0;
   highI := high(pts);
   if highI < 2 then exit;
-  result := int64(pts[highI].x) * pts[0].y - int64(pts[0].x) * pts[highI].y;
+  result := (pts[highI].x) * pts[0].y - (pts[0].x) * pts[highI].y;
   for i := 0 to highI-1 do
-    result := result + int64(pts[i].x) * pts[i+1].y - int64(pts[i+1].x) * pts[i].y;
+    result := result + (pts[i].x) * pts[i+1].y - (pts[i+1].x) * pts[i].y;
 end;
 //------------------------------------------------------------------------------
 
-function PointInPolygon(const pt: TPoint; const pts: TArrayOfPoint): Boolean;
+function PointInPolygon(const pt: TIntPoint; const pts: TArrayOfPoint): Boolean;
 var
-  I: Integer;
+  i: integer;
   iPt, jPt: PPoint;
 begin
   Result := False;
   iPt := @pts[0];
   jPt := @pts[High(pts)];
-  for I := 0 to High(pts) do
+  for i := 0 to High(pts) do
   begin
     Result := Result xor (((pt.Y >= iPt.Y) xor (pt.Y >= jPt.Y)) and
       (pt.X - iPt.X < (jPt.X - iPt.X * pt.Y - iPt.Y / jPt.Y - iPt.Y)));
@@ -397,15 +413,15 @@ begin
   if (e1.ybot = e1.ytop) then result := (e2.ybot = e2.ytop)
   else if (e2.ybot = e2.ytop) then result := false
   else result :=
-    (Int64(e1.ytop-e1.ybot)*(e2.xtop-e2.xbot)-Int64(e1.xtop-e1.xbot)*(e2.ytop-e2.ybot)) = 0;
+    ((e1.ytop-e1.ybot)*(e2.xtop-e2.xbot)-(e1.xtop-e1.xbot)*(e2.ytop-e2.ybot)) = 0;
 end;
 //---------------------------------------------------------------------------
 
-function SlopesEqual(const pt1, pt2, pt3: TPoint): boolean; overload;
+function SlopesEqual(const pt1, pt2, pt3: TIntPoint): boolean; overload;
 begin
   if (pt1.Y = pt2.Y) then result := (pt2.Y = pt3.Y)
   else if (pt2.Y = pt3.Y) then result := false
-  else result := (Int64(pt1.Y-pt2.Y)*(pt2.X-pt3.X)-Int64(pt1.X-pt2.X)*(pt2.Y-pt3.Y)) = 0;
+  else result := ((pt1.Y-pt2.Y)*(pt2.X-pt3.X)-(pt1.X-pt2.X)*(pt2.Y-pt3.Y)) = 0;
 end;
 //---------------------------------------------------------------------------
 
@@ -436,7 +452,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TopX(edge: PEdge; const currentY: integer): integer; overload;
+function TopX(edge: PEdge; const currentY: int64): int64; overload;
 begin
   if currentY = edge.ytop then result := edge.xtop
   else if edge.xtop = edge.xbot then result := edge.xbot
@@ -444,7 +460,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function IntersectPoint(edge1, edge2: PEdge; out ip: TPoint): boolean; overload;
+function IntersectPoint(edge1, edge2: PEdge; out ip: TIntPoint): boolean; overload;
 var
   b1,b2: double;
 begin
@@ -512,7 +528,7 @@ begin
   area := 0;
   startPt := pt;
   repeat
-    area := area + int64(pt.pt.X)*pt.next.pt.Y - int64(pt.next.pt.X)*pt.pt.Y;
+    area := area + (pt.pt.X)*pt.next.pt.Y - (pt.next.pt.X)*pt.pt.Y;
     pt := pt.next;
   until pt = startPt;
   //area := area /2;
@@ -520,10 +536,10 @@ begin
 end;
 
 //------------------------------------------------------------------------------
-// TClipperBase4 methods ...
+// TClipperBase methods ...
 //------------------------------------------------------------------------------
 
-constructor TClipperBase4.Create;
+constructor TClipperBase.Create;
 begin
   fEdgeList := TList.Create;
   fLmList := nil;
@@ -531,7 +547,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-destructor TClipperBase4.Destroy;
+destructor TClipperBase.Destroy;
 begin
   Clear;
   fEdgeList.Free;
@@ -539,11 +555,11 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipperBase4.AddPolygon(const polygon: TArrayOfPoint; polyType: TPolyType);
+procedure TClipperBase.AddPolygon(const polygon: TArrayOfPoint; polyType: TPolyType);
 
   //----------------------------------------------------------------------
 
-  procedure InitEdge(e, eNext, ePrev: PEdge; const pt: TPoint);
+  procedure InitEdge(e, eNext, ePrev: PEdge; const pt: TIntPoint);
   begin
     fillChar(e^, sizeof(TEdge), 0);
     e.next := eNext;
@@ -667,6 +683,8 @@ var
   edges: PEdgeArray;
   e, eHighest: PEdge;
   pg: TArrayOfPoint;
+const
+  MaxInt = 1.5E9; //~ Sqrt(2^63)/2
 begin
   {AddPolygon}
   len := length(polygon);
@@ -676,7 +694,9 @@ begin
   j := 0;
   for i := 1 to len-1 do
   begin
-    if PointsEqual(pg[j], polygon[i]) then continue
+    if (abs(polygon[i].X) > MaxInt) or (abs(polygon[i].Y) > MaxInt) then
+      raise exception.Create(rsInvalidInt)
+    else if PointsEqual(pg[j], polygon[i]) then continue
     else if (j > 0) and SlopesEqual(pg[j-1], pg[j], polygon[i]) then
     begin
       if PointsEqual(pg[j-1], polygon[i]) then dec(j);
@@ -741,7 +761,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipperBase4.AddPolygons(const polygons: TArrayOfArrayOfPoint;
+procedure TClipperBase.AddPolygons(const polygons: TArrayOfArrayOfPoint;
   polyType: TPolyType);
 var
   i: integer;
@@ -750,7 +770,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipperBase4.Clear;
+procedure TClipperBase.Clear;
 var
   i: Integer;
 begin
@@ -760,7 +780,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TClipperBase4.Reset: boolean;
+function TClipperBase.Reset: boolean;
 var
   e: PEdge;
   lm: PLocalMinima;
@@ -799,7 +819,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipperBase4.DisposeLocalMinimaList;
+procedure TClipperBase.DisposeLocalMinimaList;
 begin
   while assigned(fLmList) do
   begin
@@ -811,24 +831,24 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipperBase4.PopLocalMinima;
+procedure TClipperBase.PopLocalMinima;
 begin
   if not assigned(fCurrLM) then exit;
   fCurrLM := fCurrLM.next;
 end;
 
 //------------------------------------------------------------------------------
-// TClipper4 methods ...
+// TClipper methods ...
 //------------------------------------------------------------------------------
 
-constructor TClipper4.Create;
+constructor TClipper.Create;
 begin
   inherited Create;
   fPolyPtList := TList.Create;
 end;
 //------------------------------------------------------------------------------
 
-destructor TClipper4.Destroy;
+destructor TClipper.Destroy;
 begin
   DisposeScanbeamList;
   fPolyPtList.Free;
@@ -836,7 +856,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.DisposeScanbeamList;
+procedure TClipper.DisposeScanbeamList;
 var
   sb: PScanbeam;
 begin
@@ -849,7 +869,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TClipper4.Reset: boolean;
+function TClipper.Reset: boolean;
 var
   lm: PLocalMinima;
 begin
@@ -867,12 +887,12 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TClipper4.Execute(clipType: TClipType;
+function TClipper.Execute(clipType: TClipType;
   out solution: TArrayOfArrayOfPoint;
   subjFillType: TPolyFillType = pftEvenOdd;
   clipFillType: TPolyFillType = pftEvenOdd): boolean;
 var
-  botY, topY: integer;
+  botY, topY: int64;
 begin
   result := false;
   solution := nil;
@@ -909,7 +929,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.InsertScanbeam(const y: integer);
+procedure TClipper.InsertScanbeam(const y: int64);
 var
   sb, sb2: PScanbeam;
 begin
@@ -937,7 +957,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TClipper4.PopScanbeam: integer;
+function TClipper.PopScanbeam: int64;
 var
   sb: PScanbeam;
 begin
@@ -948,7 +968,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.DisposePolyPts(pp: PPolyPt);
+procedure TClipper.DisposePolyPts(pp: PPolyPt);
 var
   tmpPp: PPolyPt;
 begin
@@ -963,7 +983,7 @@ end;
 //------------------------------------------------------------------------------
 
 
-procedure TClipper4.DisposeAllPolyPts;
+procedure TClipper.DisposeAllPolyPts;
 var
   i: integer;
 begin
@@ -974,7 +994,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.SetWindingCount(edge: PEdge);
+procedure TClipper.SetWindingCount(edge: PEdge);
 var
   e: PEdge;
 begin
@@ -1036,7 +1056,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TClipper4.IsNonZeroFillType(edge: PEdge): boolean;
+function TClipper.IsNonZeroFillType(edge: PEdge): boolean;
 begin
   if edge.polyType = ptSubject then
     result := fSubjFillType = pftNonZero else
@@ -1044,7 +1064,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TClipper4.IsNonZeroAltFillType(edge: PEdge): boolean;
+function TClipper.IsNonZeroAltFillType(edge: PEdge): boolean;
 begin
   if edge.polyType = ptSubject then
     result := fClipFillType = pftNonZero else
@@ -1052,7 +1072,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TClipper4.IsContributing(edge: PEdge): boolean;
+function TClipper.IsContributing(edge: PEdge): boolean;
 begin
   result := true;
   case fClipType of
@@ -1078,7 +1098,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.AddLocalMinPoly(e1, e2: PEdge; const pt: TPoint);
+procedure TClipper.AddLocalMinPoly(e1, e2: PEdge; const pt: TIntPoint);
 begin
   if (e2.dx = horizontal) or (e1.dx > e2.dx) then
   begin
@@ -1096,7 +1116,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.AddLocalMaxPoly(e1, e2: PEdge; const pt: TPoint);
+procedure TClipper.AddLocalMaxPoly(e1, e2: PEdge; const pt: TIntPoint);
 begin
   AddPolyPt(e1, pt);
   if (e1.outIdx = e2.outIdx) then
@@ -1108,7 +1128,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.AddEdgeToSEL(edge: PEdge);
+procedure TClipper.AddEdgeToSEL(edge: PEdge);
 begin
   //SEL pointers in PEdge are reused to build a list of horizontal edges.
   //However, we don't need to worry about order with horizontal edge processing.
@@ -1127,7 +1147,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.CopyAELToSEL;
+procedure TClipper.CopyAELToSEL;
 var
   e: PEdge;
 begin
@@ -1147,7 +1167,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.AddJoin(e1, e2: PEdge; e1OutIdx: integer = -1);
+procedure TClipper.AddJoin(e1, e2: PEdge; e1OutIdx: integer = -1);
 var
   jr: PJoinRec;
 begin
@@ -1157,14 +1177,14 @@ begin
     jr.poly1Idx := e1.outIdx;
   with e1^ do
   begin
-    jr.pt1a := Point(xbot, ybot);
-    jr.pt1b := Point(xtop, ytop);
+    jr.pt1a := IntPoint(xbot, ybot);
+    jr.pt1b := IntPoint(xtop, ytop);
   end;
   jr.poly2Idx := e2.outIdx;
   with e2^ do
   begin
-    jr.pt2a := Point(xbot, ybot);
-    jr.pt2b := Point(xtop, ytop);
+    jr.pt2a := IntPoint(xbot, ybot);
+    jr.pt2b := IntPoint(xtop, ytop);
   end;
 
   if fJoins = nil then
@@ -1182,7 +1202,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.ClearJoins;
+procedure TClipper.ClearJoins;
 var
   m, m2: PJoinRec;
 begin
@@ -1199,7 +1219,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.AddHorzJoin(e: PEdge; idx: integer);
+procedure TClipper.AddHorzJoin(e: PEdge; idx: integer);
 var
   hr: PHorzRec;
 begin
@@ -1221,7 +1241,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.ClearHorzJoins;
+procedure TClipper.ClearHorzJoins;
 var
   m, m2: PHorzRec;
 begin
@@ -1238,9 +1258,9 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure SwapPoints(var pt1, pt2: TPoint);
+procedure SwapPoints(var pt1, pt2: TIntPoint);
 var
-  tmp: TPoint;
+  tmp: TIntPoint;
 begin
   tmp := pt1;
   pt1 := pt2;
@@ -1248,8 +1268,8 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function GetOverlapSegment(pt1a, pt1b, pt2a, pt2b: TPoint;
-  out pt1, pt2: TPoint): boolean;
+function GetOverlapSegment(pt1a, pt1b, pt2a, pt2b: TIntPoint;
+  out pt1, pt2: TIntPoint): boolean;
 begin
   //precondition: segments are colinear.
   if (pt1a.Y = pt1b.Y) or (abs((pt1a.X - pt1b.X)/(pt1a.Y - pt1b.Y)) > 1) then
@@ -1270,7 +1290,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.InsertLocalMinimaIntoAEL(const botY: integer);
+procedure TClipper.InsertLocalMinimaIntoAEL(const botY: int64);
 
   function E2InsertsBeforeE1(e1,e2: PEdge): boolean;
   begin
@@ -1308,7 +1328,7 @@ procedure TClipper4.InsertLocalMinimaIntoAEL(const botY: integer);
 
 var
   e: PEdge;
-  pt, pt2: TPoint;
+  pt, pt2: TIntPoint;
   lb, rb: PEdge;
   hj: PHorzRec;
 begin
@@ -1342,7 +1362,7 @@ begin
       InsertScanbeam(rb.ytop);
 
     if IsContributing(lb) then
-      AddLocalMinPoly(lb, rb, Point(lb.xcurr, CurrentLm.y));
+      AddLocalMinPoly(lb, rb, IntPoint(lb.xcurr, CurrentLm.y));
 
     //if output polygons share an edge, they'll need joining later ...
     if (lb.outIdx >= 0) and assigned(lb.prevInAEL) and
@@ -1360,9 +1380,9 @@ begin
           hj := fHorizJoin;
           repeat
             //if horizontals rb & hj.edge overlap, flag for joining later ...
-            if GetOverlapSegment(Point(hj.edge.xbot, hj.edge.ybot),
-              Point(hj.edge.xtop, hj.edge.ytop), Point(rb.xbot, rb.ybot),
-              Point(rb.xtop, rb.ytop), pt, pt2) then
+            if GetOverlapSegment(IntPoint(hj.edge.xbot, hj.edge.ybot),
+              IntPoint(hj.edge.xtop, hj.edge.ytop), IntPoint(rb.xbot, rb.ybot),
+              IntPoint(rb.xtop, rb.ytop), pt, pt2) then
                 AddJoin(hj.edge, rb, hj.savedIdx);
             hj := hj.next;
           until hj = fHorizJoin;
@@ -1373,7 +1393,7 @@ begin
     if (lb.nextInAEL <> rb) then
     begin
       e := lb.nextInAEL;
-      pt := Point(lb.xcurr,lb.ycurr);
+      pt := IntPoint(lb.xcurr,lb.ycurr);
       while e <> rb do
       begin
         if not assigned(e) then raise exception.Create(rsMissingRightbound);
@@ -1388,7 +1408,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.DeleteFromAEL(e: PEdge);
+procedure TClipper.DeleteFromAEL(e: PEdge);
 var
   AelPrev, AelNext: PEdge;
 begin
@@ -1404,7 +1424,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.DeleteFromSEL(e: PEdge);
+procedure TClipper.DeleteFromSEL(e: PEdge);
 var
   SelPrev, SelNext: PEdge;
 begin
@@ -1420,8 +1440,8 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.IntersectEdges(e1,e2: PEdge;
-  const pt: TPoint; protects: TIntersectProtects = []);
+procedure TClipper.IntersectEdges(e1,e2: PEdge;
+  const pt: TIntPoint; protects: TIntersectProtects = []);
 
   procedure DoEdge1;
   begin
@@ -1577,7 +1597,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.AppendPolygon(e1, e2: PEdge);
+procedure TClipper.AppendPolygon(e1, e2: PEdge);
 var
   p, pp, p1_lft, p1_rt, p2_lft, p2_rt: PPolyPt;
   newSide: TEdgeSide;
@@ -1677,7 +1697,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TClipper4.IsHole(e: PEdge): boolean;
+function TClipper.IsHole(e: PEdge): boolean;
 var
   e2: PEdge;
 begin
@@ -1691,7 +1711,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TClipper4.AddPolyPt(e: PEdge; const pt: TPoint): PPolyPt;
+function TClipper.AddPolyPt(e: PEdge; const pt: TIntPoint): PPolyPt;
 var
   fp: PPolyPt;
   ToFront: boolean;
@@ -1725,7 +1745,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.ProcessHorizontals;
+procedure TClipper.ProcessHorizontals;
 var
   e: PEdge;
 begin
@@ -1738,7 +1758,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TClipper4.IsTopHorz(const XPos: integer): boolean;
+function TClipper.IsTopHorz(const XPos: int64): boolean;
 var
   e: PEdge;
 begin
@@ -1759,13 +1779,13 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function IsMaxima(e: PEdge; const Y: integer): boolean;
+function IsMaxima(e: PEdge; const Y: int64): boolean;
 begin
   result := assigned(e) and (e.ytop = Y) and not assigned(e.nextInLML);
 end;
 //------------------------------------------------------------------------------
 
-function IsIntermediate(e: PEdge; const Y: integer): boolean;
+function IsIntermediate(e: PEdge; const Y: int64): boolean;
 begin
   result := (e.ytop = Y) and assigned(e.nextInLML);
 end;
@@ -1779,7 +1799,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.SwapPositionsInAEL(e1, e2: PEdge);
+procedure TClipper.SwapPositionsInAEL(e1, e2: PEdge);
 var
   prev,next: PEdge;
 begin
@@ -1825,7 +1845,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.SwapPositionsInSEL(e1, e2: PEdge);
+procedure TClipper.SwapPositionsInSEL(e1, e2: PEdge);
 var
   prev,next: PEdge;
 begin
@@ -1868,7 +1888,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.ProcessHorizontal(horzEdge: PEdge);
+procedure TClipper.ProcessHorizontal(horzEdge: PEdge);
 
   function GetNextInAEL(e: PEdge; Direction: TDirection): PEdge;
   begin
@@ -1880,7 +1900,7 @@ procedure TClipper4.ProcessHorizontal(horzEdge: PEdge);
 
 var
   e, eNext, eMaxPair: PEdge;
-  horzLeft, horzRight: integer;
+  horzLeft, horzRight: int64;
   Direction: TDirection;
 const
   ProtectLeft: array[boolean] of TIntersectProtects = ([ipRight], [ipLeft,ipRight]);
@@ -1947,8 +1967,8 @@ begin
       begin
         //horzEdge is evidently a maxima horizontal and we've arrived at its end.
         if Direction = dLeftToRight then
-          IntersectEdges(horzEdge, e, Point(e.xcurr, horzEdge.ycurr)) else
-          IntersectEdges(e, horzEdge, Point(e.xcurr, horzEdge.ycurr));
+          IntersectEdges(horzEdge, e, IntPoint(e.xcurr, horzEdge.ycurr)) else
+          IntersectEdges(e, horzEdge, IntPoint(e.xcurr, horzEdge.ycurr));
         exit;
       end
       else if (e.dx = horizontal) and not IsMinima(e) and not (e.xcurr > e.xtop) then
@@ -1958,19 +1978,19 @@ begin
         //being infinitesimally lower that the next (e). Therfore, we
         //intersect with e only if e.xcurr is within the bounds of horzEdge ...
         if Direction = dLeftToRight then
-          IntersectEdges(horzEdge, e, Point(e.xcurr, horzEdge.ycurr),
+          IntersectEdges(horzEdge, e, IntPoint(e.xcurr, horzEdge.ycurr),
             ProtectRight[not IsTopHorz(e.xcurr)])
         else
-          IntersectEdges(e, horzEdge, Point(e.xcurr, horzEdge.ycurr),
+          IntersectEdges(e, horzEdge, IntPoint(e.xcurr, horzEdge.ycurr),
             ProtectLeft[not IsTopHorz(e.xcurr)]);
       end
       else if (Direction = dLeftToRight) then
       begin
-        IntersectEdges(horzEdge, e, Point(e.xcurr, horzEdge.ycurr),
+        IntersectEdges(horzEdge, e, IntPoint(e.xcurr, horzEdge.ycurr),
           ProtectRight[not IsTopHorz(e.xcurr)])
       end else
       begin
-        IntersectEdges(e, horzEdge, Point(e.xcurr, horzEdge.ycurr),
+        IntersectEdges(e, horzEdge, IntPoint(e.xcurr, horzEdge.ycurr),
           ProtectLeft[not IsTopHorz(e.xcurr)]);
       end;
       SwapPositionsInAEL(horzEdge, e);
@@ -1985,13 +2005,13 @@ begin
   if assigned(horzEdge.nextInLML) then
   begin
     if (horzEdge.outIdx >= 0) then
-      AddPolyPt(horzEdge, Point(horzEdge.xtop, horzEdge.ytop));
+      AddPolyPt(horzEdge, IntPoint(horzEdge.xtop, horzEdge.ytop));
     UpdateEdgeIntoAEL(horzEdge);
   end else
   begin
     if horzEdge.outIdx >= 0 then
       IntersectEdges(horzEdge, eMaxPair,
-        Point(horzEdge.xtop, horzEdge.ycurr), [ipLeft,ipRight]);
+        IntPoint(horzEdge.xtop, horzEdge.ycurr), [ipLeft,ipRight]);
     if eMaxPair.outIdx >= 0 then raise exception.Create(rsHorizontal);
     DeleteFromAEL(eMaxPair);
     DeleteFromAEL(horzEdge);
@@ -1999,7 +2019,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.UpdateEdgeIntoAEL(var e: PEdge);
+procedure TClipper.UpdateEdgeIntoAEL(var e: PEdge);
 var
   AelPrev, AelNext: PEdge;
 begin
@@ -2031,7 +2051,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TClipper4.ProcessIntersections(const topY: integer): boolean;
+function TClipper.ProcessIntersections(const topY: int64): boolean;
 begin
   result := true;
   try
@@ -2046,7 +2066,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.DisposeIntersectNodes;
+procedure TClipper.DisposeIntersectNodes;
 var
   n: PIntersectNode;
 begin
@@ -2059,10 +2079,10 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.BuildIntersectList(const topY: integer);
+procedure TClipper.BuildIntersectList(const topY: int64);
 var
   e, eNext: PEdge;
-  pt: TPoint;
+  pt: TIntPoint;
   isModified: boolean;
 begin
   if not assigned(fActiveEdges) then exit;
@@ -2108,7 +2128,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.AddIntersectNode(e1, e2: PEdge; const pt: TPoint);
+procedure TClipper.AddIntersectNode(e1, e2: PEdge; const pt: TIntPoint);
 
   function Process1Before2(node1, node2: PIntersectNode): boolean;
   begin
@@ -2156,7 +2176,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.ProcessIntersectList;
+procedure TClipper.ProcessIntersectList;
 var
   node: PIntersectNode;
 begin
@@ -2174,10 +2194,10 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.DoMaxima(e: PEdge; const topY: integer);
+procedure TClipper.DoMaxima(e: PEdge; const topY: int64);
 var
   eNext, eMaxPair: PEdge;
-  X: integer;
+  X: int64;
 begin
   eMaxPair := GetMaximaPair(e);
   X := e.xtop;
@@ -2185,7 +2205,7 @@ begin
   while eNext <> eMaxPair do
   begin
     if not assigned(eNext) then raise exception.Create(rsDoMaxima);
-    IntersectEdges(e, eNext, Point(X, topY), [ipLeft, ipRight]);
+    IntersectEdges(e, eNext, IntPoint(X, topY), [ipLeft, ipRight]);
     eNext := eNext.nextInAEL;
   end;
   if (e.outIdx < 0) and (eMaxPair.outIdx < 0) then
@@ -2195,13 +2215,13 @@ begin
   end
   else if (e.outIdx >= 0) and (eMaxPair.outIdx >= 0) then
   begin
-    IntersectEdges(e, eMaxPair, Point(X, topY));
+    IntersectEdges(e, eMaxPair, IntPoint(X, topY));
   end
   else raise exception.Create(rsDoMaxima);
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.ProcessEdgesAtTopOfScanbeam(const topY: integer);
+procedure TClipper.ProcessEdgesAtTopOfScanbeam(const topY: int64);
 var
   e, ePrior: PEdge;
 begin
@@ -2246,7 +2266,7 @@ begin
       begin
         if (e.outIdx >= 0) then
         begin
-          AddPolyPt(e, Point(e.xtop, e.ytop));
+          AddPolyPt(e, IntPoint(e.xtop, e.ytop));
           AddHorzJoin(e.nextInLML, e.outIdx);
         end;
         UpdateEdgeIntoAEL(e);
@@ -2272,7 +2292,7 @@ begin
   begin
     if IsIntermediate(e, topY) then
     begin
-      if (e.outIdx >= 0) then AddPolyPt(e, Point(e.xtop, e.ytop));
+      if (e.outIdx >= 0) then AddPolyPt(e, IntPoint(e.xtop, e.ytop));
       UpdateEdgeIntoAEL(e);
     end;
     e := e.nextInAEL;
@@ -2280,7 +2300,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TClipper4.GetResult: TArrayOfArrayOfPoint;
+function TClipper.GetResult: TArrayOfArrayOfPoint;
 var
   i,j,k,cnt: integer;
   p: PPolyPt;
@@ -2324,7 +2344,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TClipper4.FixupOutPolygon(outPoly: PPolyPt): PPolyPt;
+function TClipper.FixupOutPolygon(outPoly: PPolyPt): PPolyPt;
 var
   pp, tmp, lastOK: PPolyPt;
 begin
@@ -2367,7 +2387,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TClipper4.FixupIntersections: boolean;
+function TClipper.FixupIntersections: boolean;
 var
   e1, e2: PEdge;
   int1, int2: PIntersectNode;
@@ -2414,10 +2434,10 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.SwapIntersectNodes(int1, int2: PIntersectNode);
+procedure TClipper.SwapIntersectNodes(int1, int2: PIntersectNode);
 var
   e1,e2: PEdge;
-  p: TPoint;
+  p: TIntPoint;
 begin
   with int1^ do
   begin
@@ -2437,7 +2457,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function FindSegment(var pp: PPolyPt; const pt1, pt2: TPoint): boolean;
+function FindSegment(var pp: PPolyPt; const pt1, pt2: TIntPoint): boolean;
 var
   pp2: PPolyPt;
 begin
@@ -2456,7 +2476,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function GetPosition(const pt1, pt2, pt: TPoint): TPosition;
+function GetPosition(const pt1, pt2, pt: TIntPoint): TPosition;
 begin
   if PointsEqual(pt1, pt) then result := pFirst
   else if PointsEqual(pt2, pt) then result := pSecond
@@ -2464,7 +2484,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function Pt3IsBetweenPt1AndPt2(const pt1, pt2, pt3: TPoint): boolean;
+function Pt3IsBetweenPt1AndPt2(const pt1, pt2, pt3: TIntPoint): boolean;
 begin
   if PointsEqual(pt1, pt3) then result := true
   else if PointsEqual(pt2, pt3) then result := true
@@ -2473,7 +2493,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function InsertPolyPtBetween(p1, p2: PPolyPt; const pt: TPoint): PPolyPt;
+function InsertPolyPtBetween(p1, p2: PPolyPt; const pt: TIntPoint): PPolyPt;
 begin
   new(result);
   result.pt := pt;
@@ -2494,11 +2514,11 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipper4.JoinCommonEdges;
+procedure TClipper.JoinCommonEdges;
 var
   j: PJoinRec;
   p1, p2, p3, p4, pp1a, pp1b, pp2a, pp2b: PPolyPt;
-  pt1, pt2: TPoint;
+  pt1, pt2: TIntPoint;
   pos1, pos2: TPosition;
 begin
   if not assigned(fJoins) then exit;
@@ -2572,7 +2592,7 @@ end;
 // OffsetPolygons ...
 //------------------------------------------------------------------------------
 
-function GetUnitNormal(const pt1, pt2: TPoint): TDoublePoint;
+function GetUnitNormal(const pt1, pt2: TIntPoint): TDoublePoint;
 var
   dx, dy, f: single;
 begin
@@ -2594,7 +2614,7 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function BuildArc(const pt: TPoint; a1, a2, r: single): TArrayOfPoint;
+function BuildArc(const pt: TIntPoint; a1, a2, r: single): TArrayOfPoint;
 var
   i, N: Integer;
   a, da: double;
@@ -2629,8 +2649,8 @@ begin
   else if position > lenE then position := lenE;
   setlength(result, lenE + lenN);
   Move(result[position],
-    result[position+lenN],(lenE-position)*sizeof(TPoint));
-  Move(newPts[0], result[position], lenN*sizeof(TPoint));
+    result[position+lenN],(lenE-position)*sizeof(TIntPoint));
+  Move(newPts[0], result[position], lenN*sizeof(TIntPoint));
 end;
 //------------------------------------------------------------------------------
 
@@ -2673,7 +2693,7 @@ var
   a1, a2, deltaSq: double;
   arc, outer: TArrayOfPoint;
   bounds: TRect;
-  c: TClipper4;
+  c: TClipper;
 begin
   deltaSq := delta*delta;
   setLength(result, length(pts));
@@ -2740,7 +2760,7 @@ begin
   end;
 
   //finally, clean up untidy corners ...
-  c := TClipper4.Create;
+  c := TClipper.Create;
   try
     c.AddPolygons(result, ptSubject);
     if delta > 0 then
@@ -2751,10 +2771,10 @@ begin
     begin
       bounds := GetBounds(result);
       setlength(outer, 4);
-      outer[0] := Point(bounds.left-10, bounds.bottom+10);
-      outer[1] := Point(bounds.right+10, bounds.bottom+10);
-      outer[2] := Point(bounds.right+10, bounds.top-10);
-      outer[3] := Point(bounds.left-10, bounds.top-10);
+      outer[0] := IntPoint(bounds.left-10, bounds.bottom+10);
+      outer[1] := IntPoint(bounds.right+10, bounds.bottom+10);
+      outer[2] := IntPoint(bounds.right+10, bounds.top-10);
+      outer[3] := IntPoint(bounds.left-10, bounds.top-10);
       c.AddPolygon(outer, ptSubject);
       if c.Execute(ctUnion, result, pftNonZero, pftNonZero) then
       begin
