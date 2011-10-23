@@ -1,8 +1,8 @@
 /*******************************************************************************
 *                                                                              *
 * Author    :  Angus Johnson                                                   *
-* Version   :  4.4.2                                                           *
-* Date      :  23 August 2011                                                  *
+* Version   :  4.5.6                                                           *
+* Date      :  11 October 2011                                                 *
 * Website   :  http://www.angusj.com                                           *
 * Copyright :  Angus Johnson 2010-2011                                         *
 *                                                                              *
@@ -32,7 +32,7 @@
 #include <cstdlib>
 #include <ostream>
 
-namespace polygonclipping {
+namespace ClipperLib {
 
 enum ClipType { ctIntersection, ctUnion, ctDifference, ctXor };
 enum PolyType { ptSubject, ptClip };
@@ -40,19 +40,24 @@ enum PolyType { ptSubject, ptClip };
 //EvenOdd & NonZero (GDI, GDI+, XLib, OpenGL, Cairo, AGG, Quartz, SVG, Gr32)
 //Others rules include Positive, Negative and ABS_GTR_EQ_TWO (only in OpenGL)
 //see http://www.songho.ca/opengl/gl_tessellation.html#winding_rules
-enum PolyFillType { pftEvenOdd, pftNonZero };
+enum PolyFillType { pftEvenOdd, pftNonZero, pftPositive, pftNegative };
 
 typedef signed long long long64;
 typedef unsigned long long ulong64;
 
 struct IntPoint {
+public:
   long64 X;
   long64 Y;
   IntPoint(long64 x = 0, long64 y = 0): X(x), Y(y) {};
+  friend std::ostream& operator <<(std::ostream &s, IntPoint &p);
 };
 
 typedef std::vector< IntPoint > Polygon;
 typedef std::vector< Polygon > Polygons;
+
+std::ostream& operator <<(std::ostream &s, Polygon &p);
+std::ostream& operator <<(std::ostream &s, Polygons &p);
 
 struct ExPolygon {
   Polygon  outer;
@@ -60,12 +65,15 @@ struct ExPolygon {
 };
 typedef std::vector< ExPolygon > ExPolygons;
 
-enum JoinType { jtSquare, jtButt, jtMiter, jtRound };
+enum JoinType { jtSquare, jtMiter, jtRound };
 
-bool IsClockwise(const Polygon &poly, bool UseFullInt64Range = true);
-double Area(const Polygon &poly, bool UseFullInt64Range = true);
-void OffsetPolygons(Polygons &in_polys, Polygons &out_polys,
-  double delta, JoinType jointype, double MiterLimit = 0);
+bool Orientation(const Polygon &poly);
+double Area(const Polygon &poly);
+void OffsetPolygons(const Polygons &in_polys, Polygons &out_polys,
+  double delta, JoinType jointype = jtSquare, double MiterLimit = 2);
+
+void ReversePoints(Polygon& p);
+void ReversePoints(Polygons& p);
 
 //used internally ...
 enum EdgeSide { esLeft, esRight };
@@ -167,8 +175,6 @@ public:
   bool AddPolygons( const Polygons &ppg, PolyType polyType);
   virtual void Clear();
   IntRect GetBounds();
-  bool UseFullCoordinateRange() {return m_UseFullRange;}; //default = false
-  void UseFullCoordinateRange(bool newVal);
 protected:
   void DisposeLocalMinimaList();
   TEdge* AddBoundsToLML(TEdge *e);
@@ -187,14 +193,16 @@ public:
   Clipper();
   ~Clipper();
   bool Execute(ClipType clipType,
-    Polygons &solution,
-    PolyFillType subjFillType = pftEvenOdd,
-    PolyFillType clipFillType = pftEvenOdd);
+  Polygons &solution,
+  PolyFillType subjFillType = pftEvenOdd,
+  PolyFillType clipFillType = pftEvenOdd);
   bool Execute(ClipType clipType,
-    ExPolygons &solution,
-    PolyFillType subjFillType = pftEvenOdd,
-    PolyFillType clipFillType = pftEvenOdd);
+  ExPolygons &solution,
+  PolyFillType subjFillType = pftEvenOdd,
+  PolyFillType clipFillType = pftEvenOdd);
   void Clear();
+  bool ReverseSolution() {return m_ReverseOutput;};
+  void ReverseSolution(bool value) {m_ReverseOutput = value;};
 protected:
   void Reset();
   virtual bool ExecuteInternal(bool fixHoleLinkages);
@@ -210,10 +218,11 @@ private:
   bool              m_ExecuteLocked;
   PolyFillType      m_ClipFillType;
   PolyFillType      m_SubjFillType;
+  bool              m_ReverseOutput;
   void DisposeScanbeamList();
   void SetWindingCount(TEdge& edge);
-  bool IsNonZeroFillType(const TEdge& edge) const;
-  bool IsNonZeroAltFillType(const TEdge& edge) const;
+  bool IsEvenOddFillType(const TEdge& edge) const;
+  bool IsEvenOddAltFillType(const TEdge& edge) const;
   void InsertScanbeam(const long64 Y);
   long64 PopScanbeam();
   void InsertLocalMinimaIntoAEL(const long64 botY);
@@ -241,7 +250,7 @@ private:
   OutRec* CreateOutRec();
   void AddOutPt(TEdge *e, TEdge *altE, const IntPoint &pt);
   void DisposeAllPolyPts();
-  void DisposeOutRec(int index, bool ignorePts = false);
+  void DisposeOutRec(PolyOutList::size_type index, bool ignorePts = false);
   bool ProcessIntersections(const long64 botY, const long64 topY);
   void AddIntersectNode(TEdge *e1, TEdge *e2, const IntPoint &pt);
   void BuildIntersectList(const long64 botY, const long64 topY);
@@ -255,11 +264,13 @@ private:
   void FixupOutPolygon(OutRec &outRec);
   bool IsHole(TEdge *e);
   void FixHoleLinkage(OutRec *outRec);
+  void CheckHoleLinkages1(OutRec *outRec1, OutRec *outRec2);
+  void CheckHoleLinkages2(OutRec *outRec1, OutRec *outRec2);
   void AddJoin(TEdge *e1, TEdge *e2, int e1OutIdx = -1, int e2OutIdx = -1);
   void ClearJoins();
   void AddHorzJoin(TEdge *e, int idx);
   void ClearHorzJoins();
-  void JoinCommonEdges();
+  void JoinCommonEdges(bool fixHoleLinkages);
 };
 
 //------------------------------------------------------------------------------
@@ -268,22 +279,15 @@ private:
 class clipperException : public std::exception
 {
   public:
-    clipperException(const char* description)
-      throw(): std::exception(), m_description (description) {}
+    clipperException(const char* description): m_descr(description) {}
     virtual ~clipperException() throw() {}
-    virtual const char* what() const throw() {return m_description.c_str();}
+    virtual const char* what() const throw() {return m_descr.c_str();}
   private:
-    std::string m_description;
+    std::string m_descr;
 };
 //------------------------------------------------------------------------------
-} //polygonclipping namespace
 
-//------------------------------------------------------------------------------
-//------------------------------------------------------------------------------
-static std::ostream& operator <<(std::ostream &s, polygonclipping::IntPoint &p);
-static std::ostream& operator <<(std::ostream &s, polygonclipping::Polygon &p);
-static std::ostream& operator <<(std::ostream &s, polygonclipping::Polygons &p);
-//------------------------------------------------------------------------------
+} //ClipperLib namespace
 
 #endif //clipper_hpp
 
