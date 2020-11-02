@@ -1,11 +1,11 @@
 /*******************************************************************************
 * Author    :  Angus Johnson                                                   *
 * Version   :  10.0 (beta)                                                     *
-* Date      :  27 March 2019                                                   *
+* Date      :  2 November 2020                                                 *
 * Website   :  http://www.angusj.com                                           *
-* Copyright :  Angus Johnson 2010-2017                                         *
-* Purpose   :  Base clipping module                                            *
-* License   : http://www.boost.org/LICENSE_1_0.txt                             *
+* Copyright :  Angus Johnson 2010-2020                                         *
+* Purpose   :  Polygon 'clipping' (boolean operations on polygons)             *
+* License   :  http://www.boost.org/LICENSE_1_0.txt                            *
 *******************************************************************************/
 
 #ifndef clipper_h
@@ -36,19 +36,12 @@ struct OutRec;
 
 struct OutPt {
 	PointI pt;
-	OutPt *next;
-	OutPt *prev;
-	OutRec *outrec;  //used in descendant classes
+	OutPt *next = NULL;
+	OutPt *prev = NULL;
+	OutRec *outrec = NULL;  //used in descendant classes
 };
 
-enum OutRecState {
-	osUndefined,
-	osOpen,
-	osOuter,
-	osOuterCheck,
-	osInner,
-	osInnerCheck
-};
+enum class OutRecState { Undefined, Open, Outer, OuterCheck, Inner, InnerCheck };
 
 template <typename T>
 class PolyTree;
@@ -71,29 +64,29 @@ struct OutRec {
 
 //Active: an edge in the AEL that may or may not be 'hot' (part of the clip solution).
 struct Active {
-	OutPt *op;  //used in descendant classes
+	OutPt *op = NULL;  //used in descendant classes
 	PointI bot;
 	PointI top;
-	cInt curr_x;  //current (updated at every new scanline)
-	double dx;
-	int wind_dx;  //1 or -1 depending on winding direction
-	int wind_cnt;
-	int wind_cnt2;  //winding count of the opposite polytype
-	OutRec *outrec;
+	cInt curr_x = 0;  //current (updated at every new scanline)
+	double dx = 0.0;
+	int wind_dx = 1;  //1 or -1 depending on winding direction
+	int wind_cnt = 0;
+	int wind_cnt2 = 0;  //winding count of the opposite polytype
+	OutRec *outrec = NULL;
 	//AEL: 'active edge list' (Vatti's AET - active edge table)
 	//     a linked list of all edges (from left to right) that are present
 	//     (or 'active') within the current scanbeam (a horizontal 'beam' that
 	//     sweeps from bottom to top over the paths in the clipping operation).
-	Active *prev_in_ael;
-	Active *next_in_ael;
+	Active *prev_in_ael = NULL;
+	Active *next_in_ael = NULL;
 	//SEL: 'sorted edge list' (Vatti's ST - sorted table)
 	//     linked list used when sorting edges into their new positions at the
 	//     top of scanbeams, but also (re)used to process horizontals.
-	Active *prev_in_sel;
-	Active *next_in_sel;
-	Active *jump;
-	Vertex *vertex_top;
-	LocalMinima *local_min;  //the bottom of an edge 'bound' (also Vatti)
+	Active *prev_in_sel = NULL;
+	Active *next_in_sel = NULL;
+	Active *jump = NULL;
+	Vertex *vertex_top = NULL;
+	LocalMinima *local_min = NULL;  //the bottom of an edge 'bound' (also Vatti)
 };
 
 // Clipper ---------------------------------------------------------------------
@@ -106,14 +99,14 @@ private:
 	typedef std::vector<LocalMinima *> MinimaList;
 	typedef std::vector<Vertex *> VertexList;
 
-	cInt bot_y_;
-	double scale_;
-	bool has_open_paths_;
-	bool minima_list_sorted_;
-	ClipType cliptype_;
-	FillRule fillrule_;
-	Active *actives_;
-	Active *sel_;
+	cInt bot_y_ = 0;
+	double scale_ = 1.0;
+	bool has_open_paths_ = false;
+	bool minima_list_sorted_ = false;
+	ClipType cliptype_ = ClipType::None;
+	FillRule fillrule_ = FillRule::EvenOdd;
+	Active *actives_ = NULL;
+	Active *sel_ = NULL;
 	MinimaList minima_list_;
 	MinimaList::iterator curr_loc_min_;
 	IntersectList intersect_list_;
@@ -178,9 +171,9 @@ public:
 
 	//ADDPATH & ADDPATHS METHODS ...
 	virtual void AddPath(const PathI &path, 
-    PathType polytype = ptSubject, bool is_open = false);
+    PathType polytype = PathType::Subject, bool is_open = false);
 	virtual void AddPaths(const PathsI &paths, 
-    PathType polytype = ptSubject, bool is_open = false);
+    PathType polytype = PathType::Subject, bool is_open = false);
 	//EXECUTE METHODS ...
 	virtual bool Execute(ClipType clip_type, 
     FillRule fill_rule, PathsI &closed_paths);
@@ -206,10 +199,10 @@ protected:
 public:
 	ClipperD(double scale = 0);
 	//ADDPATH & ADDPATHS METHODS ...
-	virtual void AddPath(const PathD &path, 
-    PathType polytype = ptSubject, bool is_open = false);
-	virtual void AddPaths(const PathsD &paths, 
-    PathType polytype = ptSubject, bool is_open = false);
+	virtual void AddPath(const PathD &path,
+    PathType polytype = PathType::Subject, bool is_open = false);
+	virtual void AddPaths(const PathsD &paths,
+    PathType polytype = PathType::Subject, bool is_open = false);
 	//EXECUTE METHODS ...
 	bool Execute(ClipType clip_type, 
     FillRule fill_rule, PathsD &closed_paths);
@@ -244,7 +237,7 @@ public:
 	size_t ChildCount() const { return childs_.size(); }
 	PolyTree<T> &Child(unsigned index);
 	const PolyTree<T> *Parent() const { return parent_; };
-	const Path<T> &Path() const { return path_; };
+	const Path<T> &GetPath() const { return path_; };
 	bool IsHole() const;
 	void SetScale(double scale);
 };

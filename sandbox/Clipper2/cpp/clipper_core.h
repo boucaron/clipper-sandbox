@@ -1,12 +1,13 @@
 /*******************************************************************************
 * Author    :  Angus Johnson                                                   *
 * Version   :  10.0 (beta)                                                     *
-* Date      :  24 March 2019                                                   *
+* Date      :  2 November 2020                                                 *
 * Website   :  http://www.angusj.com                                           *
-* Copyright :  Angus Johnson 2010-2019                                         *
-* Purpose   :  Core Clipper Library module                                     *
-*              Contains structures and functions used throughout the library   *
+* Copyright :  Angus Johnson 2010-2020                                         *
+* Purpose   :  Core Clipper Library structures and functions                   *
 * License   :  http://www.boost.org/LICENSE_1_0.txt                            *
+*                                                                              *
+* C++       :  Thanks to help from Andreas Lücke - ALuecke@gmx.net             *
 *******************************************************************************/
 
 #ifndef CLIPPER_CORE_H
@@ -23,6 +24,7 @@
 #include <ostream>
 #include <stdexcept>
 #include <vector>
+#include <type_traits>
 
 namespace clipperlib {
 
@@ -48,6 +50,10 @@ struct Point {
 		x(x), 
     y(y){};
 
+	template <typename T2>
+	Point<T>(Point<T2> p) : x(static_cast<T>(p.x)), y(static_cast<T>(p.y))
+	{};
+
 	Point &operator=(const Point &other) {
 		x = other.x;
 		y = other.y;
@@ -60,6 +66,26 @@ struct Point {
 	friend inline bool operator==(const Point &a, const Point &b) {
 		return a.x == b.x && a.y == b.y;
 	}
+
+	inline Point<T> operator-() const
+	{
+		return Point<T>(-x,-y);
+	}
+
+	inline PointD operator+(const PointD &b) const
+	{
+		return PointD(x+b.x, y+b.y);
+	}
+	inline PointD operator-(const PointD &b) const
+	{
+		return PointD(x-b.x, y-b.y);
+	}
+
+	inline PointD operator*(const double factor) const
+	{
+		return PointD(x*factor, y*factor);
+	}
+
 	friend inline bool operator!=(const Point &a, const Point &b) {
 		return !(a == b);
 	}
@@ -71,6 +97,13 @@ struct Point {
 		return os;
 	}
 };
+
+template <typename T>
+PointI round(Point<T> p)
+{
+	return PointI(static_cast<cInt>(std::round(p.x)), static_cast<cInt>(std::round(p.y)));
+}
+
 
 // Rect ------------------------------------------------------------------------
 
@@ -142,6 +175,19 @@ struct Rect {
 	}
 };
 
+// ClipperLibException ---------------------------------------------------------
+
+class ClipperLibException : public std::exception {
+public:
+	ClipperLibException(const char *description) :
+		m_descr(description) {}
+	virtual const char *what() const throw() { return m_descr.c_str(); }
+
+private:
+	std::string m_descr;
+};
+
+
 // Path ------------------------------------------------------------------------
 
 //Path: a simple data structure to represent a series of vertices, whether
@@ -157,37 +203,94 @@ struct Path;
 using PathI = Path<cInt>;
 using PathD = Path<double>;
 
-template <typename T>
+template<typename T>
 struct Path {
 	std::vector<Point<T> > data;
 
 	using Size = decltype(data.size());
 	Size size() const { return data.size(); }
 	void resize(Size size) { data.resize(size); }
+	bool empty() const { return data.size() == 0; }
 	void reserve(Size size) { data.reserve(size); }
-	void push_back(const Point<T> &point) { data.push_back(point); }
+	void push_back(const Point<T>& point) { data.push_back(point); }
+	void pop_back() { data.pop_back(); }
 	void clear() { data.clear(); }
 
 	Path() {}
-	Path(const PathI &other, double scale = 1.0);
-	Path(const PathD &other, double scale = 1.0);
 
 	Point<T> &operator[](Size idx) { return data[idx]; }
 	const Point<T> &operator[](Size idx) const { return data[idx]; }
 
-	void Append(const Path<T> &extra);
+	void Append(const Path<T> &extra) {
+	  if (extra.size() > 0)
+	    data.insert(end(data), begin(extra.data), end(extra.data));
+	}
+
 	double Area() const;
-
-	void Assign(const PathI &other, double scale = 1.0);
-	void Assign(const PathD &other, double scale = 1.0);
-
 	Rect<T> Bounds() const;
 	void Offset(T dx, T dy);
 	bool Orientation() const;
 	void Reverse();
 	void Rotate(const PointD &center, double angle_rad);
-	void Scale(T sx, T sy);
+	void Scale(double sx, double sy);
 	void StripDuplicates();
+	void Trim(double tolerance);
+
+	template<typename T2>		
+	void AppendPointsScale(const Path<T2> & other, double scale)
+	{
+		data.reserve(data.size() + other.size());
+		if  (std::numeric_limits<T>::is_integer)
+		{
+				for (const auto &p : other.data)
+					data.push_back(Point<T>(round(p*scale)));
+		}
+		else
+		{
+				for (const auto &p : other.data)
+					data.push_back(Point<T>(p * scale));
+		}
+	}
+
+	Path(const Path<T> & other, double scale){
+		if (scale == 0) scale = 1;
+		if (scale == 1) {
+			Append(other);
+		} else {
+			AppendPointsScale(other,scale);
+		}
+	}
+
+	template<typename T2, typename=
+	typename std::enable_if<!std::is_same<T, T2>::value,T>::type >
+	Path(const Path<T2> & other, double scale){
+		if (scale == 0) scale = 1;
+		AppendPointsScale(other,scale);
+	}
+
+	template<typename T2, typename=
+	typename std::enable_if<!std::is_same<T, T2>::value,T>::type >
+	void Assign(const Path<T2> & other, double scale){
+		if (&other == reinterpret_cast<Path<T2>*>(this))
+		    throw ClipperLibException("Can't assign self to self in Path<T>::Assign.");
+		data.clear();
+		if (scale == 0) scale = 1;
+		AppendPointsScale(other, scale);
+	}
+
+	void Assign(const Path<T> & other, double scale){
+		if (&other == reinterpret_cast<Path<T>*>(this))
+		    throw ClipperLibException("Can't assign self to self in Path<T>::Assign.");
+		data.clear();
+		if (scale == 0) scale = 1;
+		if (scale == 1) {
+			Append(other);
+		} else {
+			AppendPointsScale(other, scale);
+		}
+
+	}
+
 
 	friend inline Path<T> &operator<<(Path<T> &path, const Point<T> &point) {
 		path.data.push_back(point);
@@ -240,7 +343,17 @@ struct Paths {
 	void Offset(T dx, T dy);
 	void Reverse();
 	void Rotate(const PointD &center, double angle_rad);
-	void Scale(T sx, T sy);
+	void Scale(double sx, double sy);
+	void Trim(double tolerance);
+
+	template<typename T2>
+	void AppendPointsScale(const Paths<T2>& other, double scale) {
+		size_t other_size = other.size();
+		data.resize(other_size);
+		for (size_t i = 0; i < other_size; ++i)			
+			data[i].AppendPointsScale(other[i], scale);
+
+	}
 
 	friend inline Paths<T> &operator<<(Paths<T> &paths, const Path<T> &path) {
 		paths.data.push_back(path);
@@ -278,51 +391,21 @@ struct PathsArray {
 using PathsArrayI = PathsArray<cInt>;
 using PathsArrayD = PathsArray<double>;
 
-// ClipperLibException ---------------------------------------------------------
-
-class ClipperLibException : public std::exception {
-public:
-	ClipperLibException(const char *description) :
-		m_descr(description) {}
-	virtual ~ClipperLibException() throw() {}
-	virtual const char *what() const throw() { return m_descr.c_str(); }
-
-private:
-	std::string m_descr;
-};
 
 // Miscellaneous ---------------------------------------------------------------
 
 //Note: all clipping operations except for Difference are commutative.
-enum ClipType {
-	ctNone,
-	ctIntersection,
-	ctUnion,
-	ctDifference,
-	ctXor
-};
+enum class ClipType { None, Intersection, Union, Difference, Xor };
 
-enum PathType {
-	ptSubject,
-	ptClip
-};
+enum class PathType { Subject, Clip };
 
 //By far the most widely used filling rules for polygons are EvenOdd
 //and NonZero, sometimes called Alternate and Winding respectively.
 //https://en.wikipedia.org/wiki/Nonzero-rule
-enum FillRule {
-	frEvenOdd,
-	frNonZero,
-	frPositive,
-	frNegative
-};
+enum class FillRule { EvenOdd, NonZero, Positive, Negative };
 
 //PointInPolygon
-enum PipResult {
-	pipInside,
-	pipOutside,
-	pipOnEdge
-};
+enum class PipResult { Inside, Outside, OnEdge };
 
 PipResult PointInPolygon(const PointI &pt, const PathI &path);
 

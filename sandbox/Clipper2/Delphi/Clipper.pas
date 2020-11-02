@@ -3,7 +3,7 @@ unit Clipper;
 (*******************************************************************************
 * Author    :  Angus Johnson                                                   *
 * Version   :  10.0                                                            *
-* Date      :  9 March 2019                                                    *
+* Date      :  18 September 2020                                               *
 * Website   :  http://www.angusj.com                                           *
 * Copyright :  Angus Johnson 2010-2019                                         *
 * Purpose   :  This is the main polygon clipping module                        *
@@ -12,17 +12,21 @@ unit Clipper;
 
 {$IFDEF FPC}
   {$DEFINE INLINING}
+  {$MODE DELPHI}
 {$ELSE}
-  {$IF CompilerVersion < 14}
-    Requires Delphi version 6 or above.
-  {$IFEND}
   {$IF CompilerVersion >= 18}         //Delphi 2007
     //While Inlining has been supported since D2005, both D2005 and D2006
     //have an Inline codegen bug (QC41166) so ignore Inline until D2007.
     {$DEFINE INLINING}
-    {$IF CompilerVersion >= 25.0}     //Delphi XE4+
-      {$LEGACYIFEND ON}
+    {$IF COMPILERVERSION >= 23}         //Delphi XE2+
+      {$DEFINE XPLAT_GENERICS}
+      {$IF CompilerVersion >= 25.0}     //Delphi XE4+
+        {$LEGACYIFEND ON}
+      {$IFEND}
     {$IFEND}
+  {$IFEND}
+  {$IF CompilerVersion < 14}
+    Requires Delphi version 6 or above.
   {$IFEND}
 {$ENDIF}
 
@@ -33,7 +37,11 @@ unit Clipper;
 interface
 
 uses
-  Classes, SysUtils, Math, ClipperCore;
+  Classes, SysUtils, Math,
+{$IFDEF XPLAT_GENERICS}
+  Generics.Collections, Generics.Defaults,
+{$ENDIF}
+  ClipperCore;
 
 type
   TVertexFlag = (vfOpenStart, vfOpenEnd, vfLocMax, vfLocMin);
@@ -141,12 +149,19 @@ type
     FCurrentLocMinIdx   : Integer;
     FClipType           : TClipType;
     FFillRule           : TFillRule;
+{$IFDEF XPLAT_GENERICS}
+    FIntersectList      : TList<PIntersectNode>;
+    FOutRecList         : TList<TOutRec>;
+    FLocMinList         : TList<PLocalMinima>;
+    FVertexList         : TList<PVertex>;
+{$ELSE}
     FIntersectList      : TList;
     FOutRecList         : TList;
     FLocMinList         : TList;
+    FVertexList         : TList;
+{$ENDIF}
     FActives            : PActive; //see AEL above
     FSel                : PActive; //see SEL above
-    FVertexList         : TList;
     procedure Reset;
     procedure InsertScanLine(const Y: Int64);
     function PopScanLine(out Y: Int64): Boolean;
@@ -190,11 +205,15 @@ type
       {$IFDEF INLINING} inline; {$ENDIF}
   protected
     procedure CleanUp; //unlike Clear, CleanUp preserves added paths
-    function ExecuteInternal(clipType: TClipType;
-      fillRule: TFillRule): Boolean; virtual;
+    procedure ExecuteInternal(clipType: TClipType;
+      fillRule: TFillRule); virtual;
     function BuildResult(out closedPaths, openPaths: TPaths): Boolean;
     function BuildResultTree(polyTree: TPolyTree; out openPaths: TPaths): Boolean;
+{$IFDEF XPLAT_GENERICS}
+    property OutRecList: TList<TOutRec> read FOutRecList;
+{$ELSE}
     property OutRecList: TList read FOutRecList;
+{$ENDIF}
     property IntersectNode[index: integer]: PIntersectNode
       read GetIntersectNode;
   public
@@ -225,7 +244,11 @@ type
     FParent      : TPolyPath;
     FClass       : TPolyPathClass;
     FPath        : TPath;
+{$IFDEF XPLAT_GENERICS}
+    FChildList   : TList<TPolyPath>;
+{$ELSE}
     FChildList   : TList;
+{$ENDIF}
     function     GetChildCnt: Integer;
     function     GetChild(index: Integer): TPolyPath;
     function     GetIsHole: Boolean;
@@ -279,12 +302,14 @@ type
   //TPolyPathD and TPolyTreeD are wrappers for TPolyPath and TPolyTree ...
   TPolyPathD = class(TPolyPath)
   private
-    FScaling : double;
+    FScale : double;
     function  GetPathD: TPathD;
+    function  GetChild(index: Integer): TPolyPathD;
   protected
-    procedure SetScaling(scaling : double);
+    procedure SetScale(scale : double);
   public
     property  PathD: TPathD read GetPathD;
+    property  Child[index: Integer]: TPolyPathD read GetChild;
   end;
 
   TPolyTreeD = class(TPolyPathD)
@@ -397,6 +422,14 @@ begin
   //the front edge will be the LEFT edge when it's an OUTER polygon
   //so that outer polygons will be orientated clockwise
   Result := (e = e.OutRec.frontE);
+end;
+//------------------------------------------------------------------------------
+
+function LastOp(e: PActive): TOutPt;
+begin
+  result := e.OutRec.Pts;
+  if not IsFront(e) then
+    result := result.Next;
 end;
 //------------------------------------------------------------------------------
 
@@ -655,17 +688,25 @@ end;
 
 function BuildPath(op: TOutPt): TPath;
 var
-  i, opCnt: integer;
+  i,j, opCnt: integer;
 begin
   result := nil;
   opCnt := PointCount(op);
   if (opCnt < 2) then Exit;
   setLength(result, opCnt);
-  for i := 0 to opCnt -1 do
+  result[0] := op.Pt;
+  op := op.Next;
+  j := 0;
+  for i := 0 to opCnt -2 do
   begin
-    result[i] := op.Pt;
+    if not PointsEqual(result[j], op.Pt) then
+    begin
+      inc(j);
+      result[j] := op.Pt;
+    end;
     op := op.Next;
   end;
+  setLength(result, j +1);
 end;
 //------------------------------------------------------------------------------
 
@@ -897,10 +938,17 @@ end;
 
 constructor TClipper.Create;
 begin
+{$IFDEF XPLAT_GENERICS}
+  FLocMinList := TList<PLocalMinima>.Create;
+  FOutRecList := TList<TOutRec>.Create;
+  FIntersectList := TList<PIntersectNode>.Create;
+  FVertexList := TList<PVertex>.Create;
+{$ELSE}
   FLocMinList := TList.Create;
   FOutRecList := TList.Create;
   FIntersectList := TList.Create;
   FVertexList := TList.Create;
+{$ENDIF}
 end;
 //------------------------------------------------------------------------------
 
@@ -948,9 +996,24 @@ var
 begin
   if not FLocMinListSorted then
   begin
+
+{$IFDEF XPLAT_GENERICS}
+    FLocMinList.Sort(TComparer<PLocalMinima>.Construct(
+    function (const item1, item2: PLocalMinima): integer
+    var
+      dy: Int64;
+    begin
+      dy := item2.vertex.Pt.Y - item1.vertex.Pt.Y;
+      if dy < 0 then Result := -1
+      else if dy > 0 then Result := 1
+      else Result := 0;
+    end));
+{$ELSE}
     FLocMinList.Sort(LocMinListSort);
+{$ENDIF}
     FLocMinListSorted := true;
   end;
+
   for i := FLocMinList.Count -1 downto 0 do
     InsertScanLine(PLocalMinima(FLocMinList[i]).vertex.Pt.Y);
   FCurrentLocMinIdx := 0;
@@ -1061,131 +1124,118 @@ begin
   for i := 0 to FLocMinList.Count -1 do
     Dispose(PLocalMinima(FLocMinList[i]));
   FLocMinList.Clear;
-  for i := 0 to FVertexList.Count -1 do FreeMem(FVertexList[i]);
+  for i := 0 to FVertexList.Count -1 do
+    FreeMem(FVertexList[i]);
   FVertexList.Clear;
+end;
+//------------------------------------------------------------------------------
+
+procedure SetVertex(v, prevV: PVertex; const point: TPoint64);
+  {$IFDEF INLINING} inline; {$ENDIF}
+begin
+  v.pt := point;
+  if assigned(prevV) then
+    prevV.next := v;
+  v.next := nil;
+  v.prev := prevV;
+  v.flags := [];
 end;
 //------------------------------------------------------------------------------
 
 procedure TClipper.AddPathToVertexList(const p: TPath;
   polyType: TPathType; isOpen: Boolean);
 var
-  i, j, pathLen: Integer;
-  isFlat, goingUp, p0IsMinima, p0IsMaxima: Boolean;
-  v: PVertex;
+  i,j, highI: integer;
   va: PVertexArray;
+  ascending, ascending0: Boolean;
 
   procedure AddLocMin(vert: PVertex);
   var
     lm: PLocalMinima;
   begin
-    if vfLocMin in vert.flags then Exit; //ensures vertex is added only once
     Include(vert.flags, vfLocMin);
     new(lm);
     lm.vertex := vert;
     lm.PolyType := polyType;
     lm.IsOpen := isOpen;
-    FLocMinList.Add(lm);                 //nb: sorted in Reset()
+    FLocMinList.Add(lm);              //nb: sorted in Reset()
   end;
-  //----------------------------------------------------------------------------
+  //---------------------------------------------------------
 
 begin
-  pathLen := length(p);
-  while (pathLen > 1) and PointsEqual(p[pathLen -1], p[0]) do dec(pathLen);
-  if (pathLen < 2) then Exit;
+  highI := high(p);
+  while (highI > 0) and PointsEqual(p[highI], p[0]) do dec(highI);
 
-  p0IsMinima := false;
-  p0IsMaxima := false;
-  i := 1;
-  //find the first non-horizontal segment in the path ...
-  while (i < pathLen) and (p[i].Y = p[0].Y) do inc(i);
-  isFlat := i = pathLen;
-  if isFlat then
+  GetMem(va, sizeof(TVertex) * (highI +1));
+  fVertexList.Add(@va[0]);
+
+  SetVertex(@va[0], nil, p[0]);
+  if p[0].Y = p[highI].Y then
   begin
-    if not isOpen then Exit;    //Ignore closed paths that have ZERO area.
-    goingUp := false;           //And this just stops a compiler warning.
+    //since path[0] and path[highI] are horizontal
+    //find the first prior non-horizontal pt
+    i := (highI -1);
+    while (i > 0) and (p[i].Y = p[highI].Y) do dec(i);
+    if (i = 0) and not isOpen then
+      Exit; //path is entirely horizontal
+    //get the initial winding direction
+    ascending := p[0].Y < p[i].Y;
   end else
+    ascending := p[0].Y < p[highI].Y;
+  ascending0 := ascending; //save the initial winding direction
+
+  if isOpen then
   begin
-    goingUp := p[i].Y < p[0].Y; //because I'm using an inverted Y-axis display
-    if goingUp then
+    if ascending then
     begin
-      i := pathLen -1;
-      while p[i].Y = p[0].Y do dec(i);
-      p0IsMinima := p[i].Y < p[0].Y; //p[0].Y == a minima
+      va[0].flags := [vfOpenStart];
+      AddLocMin(@va[0]);
     end else
-    begin
-      i := pathLen -1;
-      while p[i].Y = p[0].Y do dec(i);
-      p0IsMaxima := p[i].Y > p[0].Y; //p[0].Y == a maxima
-    end;
-  end;
-
-  GetMem(va, sizeof(TVertex) * pathLen);
-  FVertexList.Add(va);
-
-  va[0].Pt := p[0];
-  va[0].flags := [];
-  if isOpen then
-  begin
-    include(va[0].flags, vfOpenStart);
-    if goingUp then
-      AddLocMin(@va[0]) else
-      include(va[0].flags, vfLocMax);
-  end;
-
-  //nb: polygon orientation is determined later (see InsertLocalMinimaIntoAEL).
-  i := 0;
-  for j := 1 to pathLen -1 do
-  begin
-    if PointsEqual(p[j], va[i].Pt) then Continue;           //duplicate
-    va[j].Pt := p[j];
-
-    va[j].flags := [];
-    va[i].next := @va[j];
-    va[j].prev := @va[i];
-    if (p[j].Y > p[i].Y) and goingUp then
-    begin
-      include(va[i].flags, vfLocMax);
-      goingUp := false;
-    end
-    else if (p[j].Y < p[i].Y) and not goingUp then
-    begin
-      goingUp := true;
-      AddLocMin(@va[i]);
-    end;
-    i := j;
-  end;
-  //i: index of the last vertex in the path.
-  va[i].next := @va[0];
-  va[0].prev := @va[i];
-
-  if isOpen then
-  begin
-    include(va[i].flags, vfOpenEnd);
-    if goingUp then
-      include(va[i].flags, vfLocMax) else
-      AddLocMin(@va[i]);
+      va[0].flags := [vfOpenStart, vfLocMax];
   end
-  else if goingUp then
+  else if highI < 2 then
+    Exit;
+
+  j := 0;
+  for i := 1 to highI do
   begin
-    //going up so find local maxima ...
-    v := @va[i];
-    while (v.Next.Pt.Y <= v.Pt.Y) do v := v.next;
-    include(v.flags, vfLocMax);
-    if p0IsMinima then AddLocMin(@va[0]); //ie just turned to going up
-  end else
-  begin
-    //going down so find local minima ...
-    v := @va[i];
-    while (v.Next.Pt.Y >= v.Pt.Y) do v := v.next;
-    AddLocMin(v);
-    if p0IsMaxima then include(va[0].flags, vfLocMax);
+    if PointsEqual(p[i], va[j].pt) then Continue; //skip duplicate
+    inc(j);
+    SetVertex(@va[j], @va[j-1], p[i]);
+
+    if ascending and (va[j].pt.Y > va[j-1].pt.Y) then
+    begin
+      Include(va[j-1].flags, vfLocMax);
+      ascending := false;
+    end
+    else if not ascending and (va[j].pt.Y < va[j-1].pt.Y) then
+    begin
+      AddLocMin(@va[j-1]);
+      ascending := true;
+    end;
   end;
+
+  if ascending0 <> ascending then
+  begin
+    if ascending0 then
+    begin
+      AddLocMin(@va[j]);
+    end else
+      Include(va[j].flags, vfLocMax);
+  end;
+
+  va[j].next := @va[0];
+  va[0].prev := @va[j];
+
+  if isOpen then
+    Include(va[j].flags, vfOpenEnd);
 end;
 //------------------------------------------------------------------------------
 
 procedure TClipper.AddPath(const path64: TPath; PolyType: TPathType;
   isOpen: Boolean);
 begin
+  if Length(path64) < 2 then Exit;
   if isOpen then
   begin
     if (PolyType = ptClip) then RaiseError(rsClipper_OpenPathErr);
@@ -1627,6 +1677,8 @@ begin
     if e1.OutRec.State in [osOuterCheck, osInnerCheck] then
       RecheckInnerOuter(e1);
 
+    //assert(IsFront(e1) <> IsOuter(e1.OutRec), 'oops!');
+
     //nb: IsClockwise() is generally faster than Area() but will occasionally
     //give false positives when there are tiny self-intersections at the top...
     if IsOuter(e1.OutRec) then
@@ -1968,30 +2020,25 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TClipper.ExecuteInternal(clipType: TClipType;
-  fillRule: TFillRule): Boolean;
+procedure TClipper.ExecuteInternal(clipType: TClipType;
+  fillRule: TFillRule);
 var
   Y: Int64;
   e: PActive;
 begin
-  Result := clipType = ctNone;
-  if Result then Exit;
-  try
-    FFillRule := fillRule;
-    FClipType := clipType;
-    Reset;
-    if not PopScanLine(Y) then Exit;
-    while true do
-    begin
-      InsertLocalMinimaIntoAEL(Y);
-      while PopHorz(e) do DoHorizontal(e);
-      FBotY := Y;                       //FBotY == bottom of scanbeam
-      if not PopScanLine(Y) then Break; //Y new top of scanbeam
-      DoIntersections(Y);
-      DoTopOfScanbeam(Y);
-    end;
-    Result := True;
-  except;
+  if clipType = ctNone then Exit;
+  FFillRule := fillRule;
+  FClipType := clipType;
+  Reset;
+  if not PopScanLine(Y) then Exit;
+  while true do
+  begin
+    InsertLocalMinimaIntoAEL(Y);
+    while PopHorz(e) do DoHorizontal(e);
+    FBotY := Y;                       //FBotY == bottom of scanbeam
+    if not PopScanLine(Y) then Break; //Y new top of scanbeam
+    DoIntersections(Y);
+    DoTopOfScanbeam(Y);
   end;
 end;
 //------------------------------------------------------------------------------
@@ -2001,10 +2048,14 @@ function TClipper.Execute(clipType: TClipType;
 var
   dummy: TPaths;
 begin
+  Result := true;
   closedPaths := nil;
-  try
-    Result := ExecuteInternal(clipType, fillRule) and
-      BuildResult(closedPaths, dummy);
+  try try
+    ExecuteInternal(clipType, fillRule);
+    BuildResult(closedPaths, dummy);
+  except
+    Result := false;
+  end;
   finally
     CleanUp;
   end;
@@ -2014,11 +2065,15 @@ end;
 function TClipper.Execute(clipType: TClipType; fillRule: TFillRule;
   out closedPaths, openPaths: TPaths): Boolean;
 begin
+  Result := true;
   closedPaths := nil;
   openPaths := nil;
-  try
-    Result := ExecuteInternal(clipType, fillRule) and
-      BuildResult(closedPaths, openPaths);
+  try try
+    ExecuteInternal(clipType, fillRule);
+    BuildResult(closedPaths, openPaths);
+  except
+    Result := false;
+  end;
   finally
     CleanUp;
   end;
@@ -2031,9 +2086,13 @@ begin
   if not assigned(polytree) then RaiseError(rsClipper_PolyTreeErr);
   polytree.Clear;
   openPaths := nil;
-  try
-    Result := ExecuteInternal(clipType, fillRule) and
-      BuildResultTree(polytree, openPaths);
+  Result := true;
+  try try
+    ExecuteInternal(clipType, fillRule);
+    BuildResultTree(polytree, openPaths);
+  except
+    Result := false;
+  end;
   finally
     CleanUp;
   end;
@@ -2217,7 +2276,17 @@ begin
   //crucial that intersections only occur between adjacent edges.
 
   //First we do a quicksort so intersections proceed in a bottom up order ...
+{$IFDEF XPLAT_GENERICS}
+  FIntersectList.Sort(TComparer<PIntersectNode>.Construct(
+    function (const node1, node2: PIntersectNode): integer
+    begin
+      result := node2.Pt.Y - node1.Pt.Y;
+      if (result = 0) and (node1 <> node2) then
+        result := node1.Pt.X - node2.Pt.X;
+    end));
+{$ELSE}
   FIntersectList.Sort(IntersectListSort);
+{$ENDIF}
 
   //Now as we process these intersections, we must sometimes adjust the order
   //to ensure that intersecting edges are always adjacent ...
@@ -2431,15 +2500,29 @@ begin
     //nb: 'e' will never be horizontal here
     if (e.Top.Y = Y) then
     begin
-      //the following helps to avoid micro self-intersections
-      //with negligible impact on performance ...
       e.CurrX := e.Top.X;
-      if assigned(e.PrevInAEL) and (e.PrevInAEL.CurrX = e.CurrX) and
-        (e.PrevInAEL.Bot.Y <> Y) and  IsHotEdge(e.PrevInAEL) then
-          AddOutPt(e.PrevInAEL, e.Top);
-      if assigned(e.NextInAEL) and (e.NextInAEL.CurrX = e.CurrX) and
-        (e.NextInAEL.Top.Y <> Y) and IsHotEdge(e.NextInAEL) then
-          AddOutPt(e.NextInAEL, e.Top);
+
+      if IsHotEdge(e) then
+      begin
+        if assigned(e.PrevInAEL) and (e.PrevInAEL.CurrX = e.CurrX) and
+          IsHotEdge(e.PrevInAEL) then
+        begin
+          //remove 'minima spikes' ...
+          if LastOp(e.PrevInAEL) = LastOp(e) then
+            LastOp(e).Pt := e.Top
+          //help prevent micro self-intersections ...
+          else if (e.PrevInAEL.Bot.Y <> Y) then  AddOutPt(e.PrevInAEL, e.Top);
+        end;
+        if assigned(e.NextInAEL) and (e.NextInAEL.CurrX = e.CurrX) and
+          IsHotEdge(e.NextInAEL) then
+        begin
+          //remove 'minima spikes' ...
+          if LastOp(e.NextInAEL) = LastOp(e) then
+            LastOp(e).Pt := e.Top
+          //help prevent micro self-intersections ...
+          else if (e.NextInAEL.Top.Y <> Y) then AddOutPt(e.NextInAEL, e.Top);
+        end;
+      end;
 
       if IsMaxima(e) then
       begin
@@ -2652,7 +2735,11 @@ end;
 
 constructor TPolyPath.Create;
 begin
+{$IFDEF XPLAT_GENERICS}
+  FChildList := TList<TPolyPath>.Create;
+{$ELSE}
   FChildList := TList.Create;
+{$ENDIF}
 end;
 //------------------------------------------------------------------------------
 
@@ -2666,7 +2753,7 @@ end;
 
 procedure TPolyPath.Clear;
 var
-  i: Integer;
+  i: integer;
 begin
   for i := 0 to FChildList.Count -1 do
     TPolyPath(FChildList[i]).Free;
@@ -2678,13 +2765,22 @@ function  TPolyPath.GetChild(index: Integer): TPolyPath;
 begin
   if (index < 0) or (index >= FChildList.Count) then
     Result := nil else
-    Result := TPolyPath(FChildList[index]);
+    Result := FChildList[index];
 end;
 //------------------------------------------------------------------------------
 
 function  TPolyPath.GetIsHole: Boolean;
+var
+  pp: TPolyPath;
 begin
-  Result := not assigned(FParent) or not FParent.GetIsHole;
+  result := true;
+  pp := FParent;
+  while assigned(pp) do
+  begin
+    result := not result;
+    pp := pp.FParent;
+  end;
+//  Result := not assigned(FParent) or not FParent.GetIsHole;
 end;
 //------------------------------------------------------------------------------
 
@@ -2779,7 +2875,7 @@ begin
   Result := (FScale > 0) and
     inherited Execute(clipType, fillRule, TPolyTree(polytree), openP);
   if not Result then Exit;
-  polytree.SetScaling(FScale); //recursive
+  polytree.SetScale(1/FScale); //recursive
   openPaths := ScalePathsD(openP, 1/FScale, 1/FScale);
 end;
 
@@ -2787,13 +2883,21 @@ end;
 // TPolyPathD methods
 //------------------------------------------------------------------------------
 
-procedure TPolyPathD.SetScaling(scaling : double);
+procedure TPolyPathD.SetScale(scale : double);
 var
   i: integer;
 begin
-  FScaling := scaling;
+  FScale := scale;
   for i := 0 to FChildList.Count -1 do
-    TPolyPathD(FChildList[i]).SetScaling(scaling);
+    TPolyPathD(FChildList[i]).SetScale(scale);
+end;
+//------------------------------------------------------------------------------
+
+function TPolyPathD.GetChild(index: Integer): TPolyPathD;
+begin
+  if (index < 0) or (index >= FChildList.Count) then
+    Result := nil else
+    Result := TPolyPathD(FChildList[index]);
 end;
 //------------------------------------------------------------------------------
 
@@ -2803,7 +2907,7 @@ var
 begin
   len := length(FPath);
   setLength(Result, len);
-  if (FScaling = 0) or (FScaling = 1.0) then
+  if (FScale = 0) or (FScale = 1.0) then
   begin
     for i := 0 to len -1 do
     begin
@@ -2814,8 +2918,8 @@ begin
   begin
     for i := 0 to len -1 do
     begin
-      Result[i].X := FPath[i].X / FScaling;
-      Result[i].Y := FPath[i].Y / FScaling;
+      Result[i].X := FPath[i].X / FScale;
+      Result[i].Y := FPath[i].Y / FScale;
     end;
   end;
 end;
@@ -2869,7 +2973,7 @@ begin
   end;
 
   for i := 0 to Poly.ChildCount - 1 do
-    AddPolyNodeToPathsD(TPolyPathD(Poly.Child[i]), Paths);
+    AddPolyNodeToPathsD(Poly.Child[i], Paths);
 end;
 //------------------------------------------------------------------------------
 

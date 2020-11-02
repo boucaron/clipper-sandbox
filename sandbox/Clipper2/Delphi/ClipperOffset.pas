@@ -3,7 +3,7 @@ unit ClipperOffset;
 (*******************************************************************************
 * Author    :  Angus Johnson                                                   *
 * Version   :  10.0 (beta)                                                     *
-* Date      :  9 March 2019                                                    *
+* Date      :  24 October 2020                                                 *
 * Website   :  http://www.angusj.com                                           *
 * Copyright :  Angus Johnson 2010-2017                                         *
 * Purpose   :  Offset paths and clipping solutions                             *
@@ -29,54 +29,70 @@ unit ClipperOffset;
 interface
 
 uses
-  SysUtils, Classes, Math, ClipperCore, Clipper, ClipperEx;
+  SysUtils, Classes, Math, ClipperCore, Clipper;
 
 type
 
   TJoinType = (jtSquare, jtRound, jtMiter);
   TEndType = (etPolygon, etOpenJoined, etOpenButt, etOpenSquare, etOpenRound);
 
+  TPathGroup = class
+	  paths     : TPathsD;
+	  joinType  : TJoinType;
+	  endType   : TEndType;
+    constructor Create(const paths: TPathsD; jt: TJoinType; et: TEndType);
+  end;
+
   TClipperOffset = class
   private
-    FDelta: Double;
-    FSinA, FSin, FCos: Extended;
-    FMiterLim, FMiterLimit: Double;
-    FStepsPerRad: Double;
-    FNorms: TPathD;
-    FSolution: TPaths;
-    FOutPos: Integer;
-    FPathIn: TPath;
-    FPathOut: TPath;
+    fDelta       : Double;
+    fJoinType    : TJoinType;
+    fTmpLimit    : Double;
+    fMiterLimit  : Double;
+    fStepsPerRad : Double;
+    fNorms       : TPathD;
+    fInGroups    : TList;
+    fInPath      : TPathD;
+    fOutPath     : TPathD;
+    fOutPathLen  : Integer;
+    fSolution    : TPathsD;
+    fArcTolerance: Double;
+    fSinA        : Double;
+    fCosA        : Double;
 
-    FLowestIdx: Integer; //index to the path with the lowermost vertex
-    FNodeList: TList;
-    FArcTolerance: Double;
-
-    procedure AddPoint(const pt: TPoint64);
+    procedure AddPoint(x,y: double); overload;
+    procedure AddPoint(const pt: TPointD); overload;
     procedure DoSquare(j, k: Integer);
     procedure DoMiter(j, k: Integer; cosAplus1: Double);
-    procedure DoRound(j, k: Integer);
-    procedure OffsetPoint(j: Integer;
-      var k: Integer; JoinType: TJoinType);
+    procedure DoRound(j, k: integer; isEnd: boolean);
+    procedure OffsetPoint(j: Integer; var k: integer);
 
-    procedure GetLowestPolygonIdx;
-    procedure DoOffset(delta: Double);
+    procedure CheckPaths(et: TEndType);
+    procedure BuildNormals;
+    procedure DoOffset(const paths: TPathsD;
+      delta: double; joinType: TJoinType; endType: TEndType);
+    procedure OffsetPolygon;
+    procedure OffsetOpenPath(endType: TEndType);
   public
     constructor Create(MiterLimit: double = 2.0; ArcTolerance: double = 0.0);
     destructor Destroy; override;
-    procedure AddPath(const p: TPath; jt: TJoinType; et: TEndType);
-    procedure AddPaths(const p: TPaths; jt: TJoinType; et: TEndType);
+    procedure AddPath(const path: TPathD;
+      joinType: TJoinType; endType: TEndType);
+    procedure AddPaths(const paths: TPathsD;
+      joinType: TJoinType; endType: TEndType);
     procedure Clear;
-    procedure Execute(out solution: TPaths; delta: Double);
-    property MiterLimit: Double read FMiterLimit write FMiterLimit;
-    property ArcTolerance: Double read FArcTolerance write FArcTolerance;
+    procedure Execute(delta: Double; out solution: TPathsD);
+    property MiterLimit: Double read fMiterLimit write fMiterLimit;
+    property ArcTolerance: Double read fArcTolerance write fArcTolerance;
   end;
 
   function ClipperOffsetPaths(const paths: TPaths;
-    delta: Double; jt: TJoinType; et: TEndType): TPaths; overload;
+    delta: Double; jt: TJoinType; et: TEndType;
+    miterLimit: double = 2.0): TPaths; overload;
 
   function ClipperOffsetPaths(const paths: TPathsD;
-    delta: Double; jt: TJoinType; et: TEndType): TPathsD; overload;
+    delta: Double; jt: TJoinType; et: TEndType;
+    miterLimit: double = 2.0): TPathsD; overload;
 
 implementation
 
@@ -87,17 +103,6 @@ implementation
 //nb: this issue has now been resolved in Delphi 10.2
 {$OVERFLOWCHECKS OFF}
 
-type
-  TPathNode = class
-  private
-    FPath      : TPath;
-    FJoinType  : TJoinType;
-    FEndType   : TEndType;
-    fLowestIdx : Integer;
-  public
-    constructor  Create(const p: TPath; jt: TJoinType; et: TEndType);
-  end;
-
 resourcestring
   rsClipperOffset = 'ClipperOffset error';
 
@@ -105,6 +110,7 @@ const
   Tolerance           : Double = 1.0E-15;
   DefaultArcFrac      : Double = 0.02;
   Two_Pi              : Double = 2 * PI;
+  Quarter_Pi          : Double = 0.25 * PI;
   LowestIp            : TPoint64 = (X: High(Int64); Y: High(Int64));
 
 //------------------------------------------------------------------------------
@@ -125,7 +131,13 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function GetUnitNormal(const pt1, pt2: TPoint64): TPointD;
+function DistanceSqr(const pt1, pt2: TPointD): double;
+begin
+  Result := (pt1.X - pt2.X)*(pt1.X - pt2.X) + (pt1.Y - pt2.Y)*(pt1.Y - pt2.Y);
+end;
+//------------------------------------------------------------------------------
+
+function GetUnitNormal(const pt1, pt2: TPointD): TPointD;
 var
   dx, dy, inverseHypot: Double;
 begin
@@ -144,51 +156,66 @@ begin
   Result.X := dy;
   Result.Y := -dx
 end;
-
-//------------------------------------------------------------------------------
-//  TPathNode methods
 //------------------------------------------------------------------------------
 
-constructor  TPathNode.Create(const p: TPath; jt: TJoinType; et: TEndType);
+function GetLowestPolygonIdx(const paths: TPathsD): integer;
 var
-  i, lenP, last: Integer;
+  i,j: integer;
+  lp: TPointD;
+  p: TPathD;
 begin
-  inherited Create;
-  FPath := nil;
-  FJoinType := jt;
-  FEndType := et;
+	Result := -1;
+	for i := 0 to High(paths) do
+		if Length(paths[i]) > 0 then
+    begin
+			Result := i;
+			lp := paths[i][0];
+			break;
+		end;
+	if (Result < 0) then Exit;
 
-  lenP := length(p);
-  if (et = etPolygon) or (et = etOpenJoined) then
-    while (lenP > 1) and PointsEqual(p[lenP-1], p[0]) do dec(lenP)
-  else if (lenP = 2) and PointsEqual(p[1], p[0]) then
-    lenP := 1;
-
-  if lenP = 0 then
-    Exit
-  else if (lenP < 3) and ((et = etPolygon) or (et = etOpenJoined)) then
-  begin
-    if jt = jtRound then FEndType := etOpenRound
-    else FEndType := etOpenSquare;
+	for i := Result to High(paths) do
+	begin
+		p := paths[i];
+		for j := 0 to High(p) do
+			if (p[j].Y > lp.Y) or ((p[j].Y = lp.Y) and (p[j].X < lp.X)) then
+      begin
+				Result := i;
+				lp := p[j];
+			end;
   end;
+end;
+//------------------------------------------------------------------------------
 
-  setLength(fPath, lenP);
-  fPath[0] := p[0];
-  last := 0;
-  FLowestIdx := 0;
-  for i := 1 to lenP -1 do
-  begin
-    if PointsEqual(fPath[last], p[i]) then Continue;
-    inc(last);
-    fPath[last] := p[i];
-    if (FEndType <> etPolygon) then Continue;
-    if (p[i].Y >= fPath[fLowestIdx].Y) and
-      ((p[i].Y > fPath[fLowestIdx].Y) or (p[i].X < fPath[fLowestIdx].X)) then
-        fLowestIdx := i;
-  end;
-  setLength(fPath, last +1);
-  if (FEndType = etPolygon) and (last < 2) then FPath := nil;
-  //note open paths can have just a single vertex.
+//function TurnsLeft(const a, b, c: TPointD): boolean;
+//var
+//  ab,bc: TPointD;
+//begin
+//  ab.X := b.X - a.X; ab.Y := b.Y - a.Y;
+//  bc.X := b.X - c.X; bc.Y := b.Y - c.Y;
+//  result := (ab.x * bc.y - ab.y * bc.x) > 0; //cross product
+//end;
+//---------------------------------------------------------------------------
+
+function CopyPaths(const paths: TPathsD): TPathsD;
+var
+  i, len: integer;
+begin
+  len := Length(paths);
+  SetLength(Result, len);
+  for i := 0 to len -1 do
+    Result[i] := Copy(paths[i], 0, Length(paths[i]));
+end;
+
+//------------------------------------------------------------------------------
+// TPathGroup methods
+//------------------------------------------------------------------------------
+
+constructor TPathGroup.Create(const paths: TPathsD; jt: TJoinType; et: TEndType);
+begin
+  Self.paths := CopyPaths(paths);
+  Self.joinType := jt;
+  Self.endType := et;
 end;
 
 //------------------------------------------------------------------------------
@@ -198,312 +225,325 @@ end;
 constructor TClipperOffset.Create(MiterLimit: double; ArcTolerance: double);
 begin
   inherited Create;
-  FNodeList := TList.Create;
-  FMiterLimit := MiterLimit;
-  FArcTolerance := ArcTolerance;
+  fMiterLimit := MiterLimit;
+  fArcTolerance := ArcTolerance;
+  fInGroups     := TList.Create;
 end;
 //------------------------------------------------------------------------------
 
 destructor TClipperOffset.Destroy;
 begin
   Clear;
-  FNodeList.Free;
+  fInGroups.Free;
   inherited;
 end;
 //------------------------------------------------------------------------------
 
 procedure TClipperOffset.Clear;
 var
-  i: Integer;
+  i: integer;
 begin
-  for i := 0 to FNodeList.Count -1 do
-    TPathNode(FNodeList[i]).Free;
-  FNodeList.Clear;
-  FNorms := nil;
-  FSolution := nil;
+  for i := 0 to fInGroups.Count -1 do
+    TPathGroup(fInGroups[i]).Free;
+  fInGroups.Clear;
+  fSolution := nil;
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipperOffset.AddPath(const p: TPath; jt: TJoinType; et: TEndType);
+procedure TClipperOffset.AddPath(const path: TPathD;
+  joinType: TJoinType; endType: TEndType);
 var
-  pn: TPathNode;
+  paths: TPathsD;
 begin
-  pn := TPathNode.Create(p, jt, et);
-  if pn.FPath = nil then pn.Free
-  else FNodeList.Add(pn);
+  if not assigned(path) then Exit;
+  SetLength(paths, 1);
+  paths[0] := path;
+  AddPaths(Paths, joinType, endType);
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipperOffset.AddPaths(const p: TPaths; jt: TJoinType; et: TEndType);
+procedure TClipperOffset.AddPaths(const paths: TPathsD;
+  joinType: TJoinType; endType: TEndType);
 var
-  i: Integer;
+  node: TPathGroup;
 begin
-  for i := 0 to High(p) do AddPath(p[i], jt, et);
+  if Length(paths) = 0 then Exit;
+  node := TPathGroup.Create(paths, joinType, endType);
+  fInGroups.Add(node);
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipperOffset.GetLowestPolygonIdx;
+procedure TClipperOffset.CheckPaths(et: TEndType);
 var
-  i: Integer;
-  node: TPathNode;
-  ip1, ip2: TPoint64;
+  i,j, len, minLen: Integer;
+  openPaths: Boolean;
 begin
-  FLowestIdx := -1;
-  for i := 0 to FNodeList.Count -1 do
-  begin
-    node := TPathNode(FNodeList[i]);
-    if (node.FEndType <> etPolygon) then Continue;
-    if fLowestIdx < 0 then
+  for i := 0 to fInGroups.Count -1 do
+    with TPathGroup(fInGroups[i]) do
     begin
-      ip1 := node.FPath[node.FLowestIdx];
-      FLowestIdx := i;
-    end else
-    begin
-      ip2 := node.FPath[node.FLowestIdx];
-      if (ip2.Y >= ip1.Y) and
-        ((ip2.Y > ip1.Y) or (ip2.X < ip1.X)) then
+      openPaths := not (et in [etPolygon, etOpenJoined]);
+      if openPaths then minLen := 1 else minLen := 3;
+      for j := 0 to High(paths) do
       begin
-        FLowestIdx := i;
-        ip1 := ip2;
+        StripDuplicates(paths[j]);
+        len := length(paths[j]);
+        if (len > 1) and not openPaths and
+          PointsEqual(paths[j][0], paths[j][len-1]) then
+        begin
+          setlength(paths[j], len -1);
+          dec(len);
+        end;
+        if len < minLen then paths[j] := nil;
       end;
     end;
-  end;
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipperOffset.DoOffset(delta: Double);
+procedure TClipperOffset.DoOffset(const paths: TPathsD;
+  delta: double; joinType: TJoinType; endType: TEndType);
 var
-  i, j, k, pathLen, solCnt: Integer;
-  X, X2, Y, arcTol, absDelta, steps: Double;
-  node: TPathNode;
-  norm: TPointD;
+  i, lowestIdx: Integer;
+  arcTol, steps: Double;
+  tmpEndType: TEndType;
+  outPaths: TPathsD;
+  outPathsI: TPaths;
+  openPaths, isClockwise: Boolean;
 begin
-  FDelta := delta;
-  absDelta := Abs(delta);
 
-  //if a Zero offset, then just copy CLOSED polygons to FSolution and return ...
-  if absDelta < Tolerance then
+  fJoinType := joinType;
+  CheckPaths(endType);
+
+  openPaths := not (endType in [etPolygon, etOpenJoined]);
+  if not openPaths then
   begin
-    solCnt := 0;
-    SetLength(FSolution, FNodeList.Count);
-    for i := 0 to FNodeList.Count -1 do
-      if (TPathNode(FNodeList[i]).FEndType = etPolygon) then
-      begin
-        FSolution[solCnt] := TPathNode(FNodeList[i]).FPath;
-        inc(solCnt);
-      end;
-    SetLength(FSolution, solCnt);
-    Exit;
+    //the lowermost polygon must be an outer polygon. So we can use that as the
+    //designated orientation for outer polygons (needed for tidy-up clipping)
+    lowestIdx := GetLowestPolygonIdx(paths);
+    if lowestIdx < 0 then Exit;
+    isClockwise := Area(paths[lowestIdx]) > 0;
+    if not isClockwise then delta := -delta;
+    fDelta := delta;
+  end else
+  begin
+    fDelta := Abs(delta) /2;
+    isClockwise := true;
   end;
 
   //FMiterLimit: see offset_triginometry3.svg
-  if FMiterLimit > 1 then FMiterLim := 2/(sqr(FMiterLimit))
-  else FMiterLim := 2;
+  if fMiterLimit > 1 then
+    fTmpLimit := 2/(sqr(fMiterLimit)) else
+    fTmpLimit := 2;
 
-  if (FArcTolerance <= DefaultArcFrac) then
-    arcTol := absDelta * DefaultArcFrac else
-    arcTol := FArcTolerance;
+  if (fArcTolerance <= DefaultArcFrac) then
+    arcTol := DefaultArcFrac else
+    arcTol := fArcTolerance;
 
-
-  //see offset_triginometry2.svg
-  steps := PI / ArcCos(1 - arcTol / absDelta);  //steps per 360 degrees
-  if (steps > absDelta * Pi) then
-    steps := absDelta * Pi;                //ie excessive precision check
-
-  Math.SinCos(Two_Pi / steps, FSin, FCos); //sin & cos per step
-  if delta < 0 then FSin := -FSin;
-  FStepsPerRad := steps / Two_Pi;
-
-  SetLength(FSolution, FNodeList.Count * 2);
-  solCnt := 0;
-  for i := 0 to FNodeList.Count -1 do
+  //calculate a sensible number of steps (for 360 deg for the given offset
+  if (joinType = jtRound) or (endType = etOpenRound) then
   begin
-    node := TPathNode(FNodeList[i]);
-    FPathIn := node.FPath;
-    pathLen := length(FPathIn);
+    //get steps per 360 degrees (see offset_triginometry2.svg)
+    steps := PI / ArcCos(1 - arcTol / Abs(fDelta));
+    steps := Min(steps, Max(6, Abs(fDelta) * Pi)); //avoids excessive precision
+    fStepsPerRad := steps / Two_Pi;
+  end;
 
-    FOutPos := 0;
-    FPathOut := nil;
+  outPaths := nil;
+  for i := 0 to High(paths) do
+  begin
+    fInPath := paths[i];
+    if fInPath = nil then Continue;
 
-    //if a single vertex then build circle or a square ...
-    if (pathLen = 1) then
+    fNorms := nil;
+    fOutPath := nil;
+    fOutPathLen := 0;
+
+    if Length(fInPath) = 1 then
     begin
-      if node.FJoinType = jtRound then
-      begin
-        X := 1; Y := 0;
-        for j := 1 to Round(steps) do
-        begin
-          AddPoint(Point64(
-            Round(FPathIn[0].X + X * FDelta),
-            Round(FPathIn[0].Y + Y * FDelta)));
-          X2 := X;
-          X := X * FCos - FSin * Y;
-          Y := X2 * FSin + Y * FCos;
-        end
-      end else
-      begin
-        X := -1; Y := -1;
-        for j := 1 to 4 do
-        begin
-          AddPoint(Point64( Round(FPathIn[0].X + X * FDelta),
-            Round(FPathIn[0].Y + Y * FDelta)));
-          if X < 0 then X := 1
-          else if Y < 0 then Y := 1
-          else X := -1;
-        end;
+      //construct a circular or square 'point' using OffsetOpenPath
+      tmpEndType := endType;
+      try
+        if endType = etOpenButt then endType := etOpenSquare;
+        SetLength(fInPath, 2);
+        fInPath[1] := fInPath[0];
+        SetLength(fNorms, 2);
+        fNorms[0] := PointD(1,0);
+        OffsetOpenPath(endType);
+      finally
+        endType := tmpEndType;
       end;
-      SetLength(FPathOut, FOutPos);
-      FSolution[solCnt] := FPathOut;
-      Inc(solCnt);
-      Continue;
-    end;
-
-    //build normals ...
-    SetLength(FNorms, pathLen);
-    for j := 0 to pathLen-2 do
-      FNorms[j] := GetUnitNormal(FPathIn[j], FPathIn[j+1]);
-    if (node.FEndType in [etOpenJoined, etPolygon]) then
-      FNorms[pathLen-1] := GetUnitNormal(FPathIn[pathLen-1], FPathIn[0]) else
-      FNorms[pathLen-1] := FNorms[pathLen-2];
-
-    //offset using normals ...
-    if node.FEndType = etPolygon then
-    begin
-      k := pathLen -1;
-      for j := 0 to pathLen-1 do
-        OffsetPoint(j, k, node.FJoinType);
-      SetLength(FPathOut, FOutPos);
-      FSolution[solCnt] := FPathOut;
-      Inc(solCnt);
-    end
-    else if (node.FEndType = etOpenJoined) then
-    begin
-      k := pathLen -1;
-      for j := 0 to pathLen-1 do OffsetPoint(j, k, node.FJoinType);
-      SetLength(FPathOut, FOutPos);
-      FSolution[solCnt] := FPathOut;
-      Inc(solCnt);
-
-      FOutPos := 0;
-      FPathOut := nil;
-
-      //reverse normals and repeat offsetting ...
-      norm := FNorms[pathLen - 1];
-      for j := pathLen-1 downto 1 do
-      begin
-        FNorms[j].X := -FNorms[j-1].X;
-        FNorms[j].Y := -FNorms[j-1].Y;
-      end;
-      FNorms[0].X := -norm.X;
-      FNorms[0].Y := -norm.Y;
-
-      k := 0;
-      for j := pathLen-1 downto 0 do OffsetPoint(j, k, node.FJoinType);
-      SetLength(FPathOut, FOutPos);
-
-      FSolution[solCnt] := FPathOut;
-      Inc(solCnt);
     end else
     begin
-      //offset the open path going forward ...
-      k := 0;
-      for j := 1 to pathLen-2 do OffsetPoint(j, k, node.FJoinType);
+      BuildNormals;
 
-      //handle the end (butt, round or square) ...
-      if node.FEndType = etOpenButt then
+      if endType = etPolygon then
+        OffsetPolygon
+      else if endType = etOpenJoined then
       begin
-        j := pathLen - 1;
-        AddPoint(Point64(round(FPathIn[j].X + FNorms[j].X *FDelta),
-          round(FPathIn[j].Y + FNorms[j].Y * FDelta)));
-        AddPoint(Point64(round(FPathIn[j].X - FNorms[j].X *FDelta),
-          round(FPathIn[j].Y - FNorms[j].Y * FDelta)));
+        fInPath := Copy(paths[i], 0, Length(paths[i]));
+        OffsetPolygon;
+        SetLength(fOutPath, fOutPathLen);
+        AppendPath(outPaths, fOutPath);
+        fOutPath := nil;
+        fOutPathLen := 0;
+        fInPath := ReversePath(fInPath);
+        BuildNormals;
+        OffsetPolygon;
       end else
-      begin
-        j := pathLen - 1;
-        k := pathLen - 2;
-        FNorms[j].X := -FNorms[j].X;
-        FNorms[j].Y := -FNorms[j].Y;
-        FSinA := 0;
-        if node.FEndType = etOpenSquare then
-          DoSquare(j, k) else
-          DoRound(j, k);
-      end;
-
-      //reverse normals ...
-      for j := pathLen-1 downto 1 do
-      begin
-        FNorms[j].X := -FNorms[j-1].X;
-        FNorms[j].Y := -FNorms[j-1].Y;
-      end;
-      FNorms[0].X := -FNorms[1].X;
-      FNorms[0].Y := -FNorms[1].Y;
-
-      //repeat offset but now going backward ...
-      k := pathLen -1;
-      for j := pathLen -2 downto 1 do OffsetPoint(j, k, node.FJoinType);
-
-      //finally handle the start (butt, round or square) ...
-      if node.FEndType = etOpenButt then
-      begin
-        AddPoint(Point64(round(FPathIn[0].X - FNorms[0].X *FDelta),
-          round(FPathIn[0].Y - FNorms[0].Y * FDelta)));
-        AddPoint(Point64(round(FPathIn[0].X + FNorms[0].X *FDelta),
-          round(FPathIn[0].Y + FNorms[0].Y * FDelta)));
-      end else
-      begin
-        FSinA := 0;
-        if node.FEndType = etOpenSquare then
-          DoSquare(0, 1) else
-          DoRound(0, 1);
-      end;
-      SetLength(FPathOut, FOutPos);
-      FSolution[solCnt] := FPathOut;
-      Inc(solCnt);
+        OffsetOpenPath(endType);
     end;
+
+    if fOutPathLen = 0 then Continue;
+    SetLength(fOutPath, fOutPathLen);
+    AppendPath(outPaths, fOutPath);
   end;
-  SetLength(FSolution, solCnt);
-end;
-//------------------------------------------------------------------------------
 
-procedure TClipperOffset.Execute(out solution: TPaths; delta: Double);
-var
-  negate: Boolean;
-begin
-  solution := nil;
-  if FNodeList.Count = 0 then Exit;
-
-  GetLowestPolygonIdx;
-  negate := (FLowestIdx >= 0) and
-    (Area(TPathNode(FNodeList[FLowestIdx]).FPath) < 0);
-  //if polygon orientations are reversed, then 'negate' ...
-  if negate then
-      FDelta := - delta else
-      FDelta := delta;
-
-  DoOffset(FDelta);
-
-  //clean up 'corners' ...
-  with TClipperEx.Create do
+  outPathsI := ScalePaths(outPaths, 100, 100);
+  //clean up self-intersections ...
+  with TClipper.Create do
   try
-    AddPaths(FSolution, ptSubject);
-    if negate then
-      Execute(ctUnion, frNegative, solution) else
-      Execute(ctUnion, frPositive, solution);
+    AddPaths(outPathsI, ptSubject);
+    if not isClockwise then
+      Execute(ctUnion, frNegative, outPathsI) else
+      Execute(ctUnion, frPositive, outPathsI);
   finally
     free;
   end;
+  outPaths := ScalePathsD(outPathsI, 0.01, 0.01);
+
+  AppendPaths(fSolution, outPaths);
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipperOffset.AddPoint(const pt: TPoint64);
+procedure TClipperOffset.BuildNormals;
+var
+  i, len: integer;
+begin
+  len := Length(fInPath);
+  SetLength(fNorms, len);
+  for i := 0 to len-2 do
+    fNorms[i] := GetUnitNormal(fInPath[i], fInPath[i+1]);
+  fNorms[len -1] := GetUnitNormal(fInPath[len -1], fInPath[0]);
+end;
+//------------------------------------------------------------------------------
+
+procedure TClipperOffset.OffsetPolygon;
+var
+  i,j: integer;
+begin
+  j := high(fInPath);
+  for i := 0 to high(fInPath) do
+    OffsetPoint(i, j);
+end;
+//------------------------------------------------------------------------------
+
+procedure TClipperOffset.OffsetOpenPath(endType: TEndType);
+
+  procedure DoButtEnd(highI: integer);
+  begin
+    AddPoint(fInPath[highI].X + fNorms[highI-1].X *fDelta,
+      fInPath[highI].Y + fNorms[highI-1].Y * fDelta);
+    AddPoint(fInPath[highI].X - fNorms[highI-1].X *fDelta,
+      fInPath[highI].Y - fNorms[highI-1].Y * fDelta);
+  end;
+
+  procedure DoButtStart;
+  begin
+    AddPoint(fInPath[0].X + fNorms[1].X *fDelta,
+      fInPath[0].Y + fNorms[1].Y * fDelta);
+    AddPoint(fInPath[0].X - fNorms[1].X *fDelta,
+      fInPath[0].Y - fNorms[1].Y * fDelta);
+  end;
+
+var
+  i, k, highI: integer;
+begin
+  highI := high(fInPath);
+  k := 0;
+  for i := 1 to highI -1 do
+    OffsetPoint(i, k);
+
+  k := highI -1;
+  fNorms[highI].X := -fNorms[k].X;
+  fNorms[highI].Y := -fNorms[k].Y;
+
+ //cap the end first ...
+  case endType of
+    etOpenButt: DoButtEnd(highI);
+    etOpenRound: DoRound(highI, k, true);
+    else DoSquare(highI, k);
+  end;
+
+  //reverse normals ...
+  for i := highI -1 downto 1 do
+  begin
+    fNorms[i].X := -fNorms[i-1].X;
+    fNorms[i].Y := -fNorms[i-1].Y;
+  end;
+  fNorms[0].X := -fNorms[1].X;
+  fNorms[0].Y := -fNorms[1].Y;
+
+  k := highI;
+  for i := highI -1 downto 1 do
+    OffsetPoint(i, k);
+
+  //now cap the start ...
+  case endType of
+    etOpenButt: DoButtStart;
+    etOpenRound: DoRound(0, 1, true);
+    else doSquare(0, 1);
+  end;
+end;
+//------------------------------------------------------------------------------
+
+procedure TClipperOffset.Execute(delta: Double; out solution: TPathsD);
+var
+  i: integer;
+begin
+  solution := nil;
+  fSolution := nil;
+  if fInGroups.Count = 0 then Exit;
+
+  //if a Zero offset, then simply copy paths to FSolution and Exit
+  if abs(delta) < Tolerance then
+  begin
+    for i := 0 to fInGroups.Count -1 do
+      with TPathGroup(fInGroups[i]) do
+          AppendPaths(solution, paths);
+    Exit;
+  end;
+
+  for i := 0 to fInGroups.Count -1 do
+    with TPathGroup(fInGroups[i]) do
+      DoOffset(paths, delta, jointype, endtype);
+
+  solution := fSolution;
+end;
+//------------------------------------------------------------------------------
+
+procedure TClipperOffset.AddPoint(x,y: double);
+const
+  BuffLength = 32;
+var
+  pt: TPointD;
+begin
+  pt := PointD(x,y);
+  if fOutPathLen = length(fOutPath) then
+    SetLength(fOutPath, fOutPathLen + BuffLength);
+  if (fOutPathLen > 0) and PointsEqual(fOutPath[fOutPathLen-1], pt) then Exit;
+  fOutPath[fOutPathLen] := pt;
+  Inc(fOutPathLen);
+end;
+//------------------------------------------------------------------------------
+
+procedure TClipperOffset.AddPoint(const pt: TPointD);
 const
   BuffLength = 32;
 begin
-  if FOutPos = length(FPathOut) then
-    SetLength(FPathOut, FOutPos + BuffLength);
-  if (FOutPos > 0) and PointsEqual(FPathOut[FOutPos-1], pt) then Exit;
-  FPathOut[FOutPos] := pt;
-  Inc(FOutPos);
+  if fOutPathLen = length(fOutPath) then
+    SetLength(fOutPath, fOutPathLen + BuffLength);
+  if (fOutPathLen > 0) and PointsEqual(fOutPath[fOutPathLen-1], pt) then Exit;
+  fOutPath[fOutPathLen] := pt;
+  Inc(fOutPathLen);
 end;
 //------------------------------------------------------------------------------
 
@@ -512,22 +552,23 @@ begin
   //Two vertices, one using the prior offset's (k) normal one the current (j).
   //Do a 'normal' offset (by delta) and then another by 'de-normaling' the
   //normal hence parallel to the direction of the respective edges.
-  if FDelta > 0 then
+  if (fDelta > 0) then
   begin
-    AddPoint(Point64(
-      round(FPathIn[j].X + FDelta * (FNorms[k].X - FNorms[k].Y)),
-      round(FPathIn[j].Y + FDelta * (FNorms[k].Y + FNorms[k].X))));
-    AddPoint(Point64(
-      round(FPathIn[j].X + FDelta * (FNorms[j].X + FNorms[j].Y)),
-      round(FPathIn[j].Y + FDelta * (FNorms[j].Y - FNorms[j].X))));
+    AddPoint(
+      fInPath[j].X + fDelta * (fNorms[k].X - fNorms[k].Y),
+      fInPath[j].Y + fDelta * (fNorms[k].Y + fNorms[k].X));
+
+    AddPoint(
+      fInPath[j].X + fDelta * (fNorms[j].X + fNorms[j].Y),
+      fInPath[j].Y + fDelta * (fNorms[j].Y - fNorms[j].X));
   end else
   begin
-    AddPoint(Point64(
-      round(FPathIn[j].X + FDelta * (FNorms[k].X + FNorms[k].Y)),
-      round(FPathIn[j].Y + FDelta * (FNorms[k].Y - FNorms[k].X))));
-    AddPoint(Point64(
-      round(FPathIn[j].X + FDelta * (FNorms[j].X - FNorms[j].Y)),
-      round(FPathIn[j].Y + FDelta * (FNorms[j].Y + FNorms[j].X))));
+    AddPoint(
+      fInPath[j].X + fDelta * (fNorms[k].X + fNorms[k].Y),
+      fInPath[j].Y + fDelta * (fNorms[k].Y - fNorms[k].X));
+    AddPoint(
+      fInPath[j].X + fDelta * (fNorms[j].X - fNorms[j].Y),
+      fInPath[j].Y + fDelta * (fNorms[j].Y + fNorms[j].X));
   end;
 end;
 //------------------------------------------------------------------------------
@@ -537,96 +578,98 @@ var
   q: Double;
 begin
   //see offset_triginometry4.svg
-  q := FDelta / cosAplus1; //0 < cosAplus1 <= 2
-  AddPoint(Point64(round(FPathIn[j].X + (FNorms[k].X + FNorms[j].X)*q),
-    round(FPathIn[j].Y + (FNorms[k].Y + FNorms[j].Y)*q)));
+  q := fDelta / cosAplus1;
+  AddPoint(fInPath[j].X + (fNorms[k].X + fNorms[j].X)*q,
+    fInPath[j].Y + (fNorms[k].Y + fNorms[j].Y)*q);
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipperOffset.DoRound(j, k: Integer);
+procedure TClipperOffset.DoRound(j, k: Integer; isEnd: boolean);
 var
   i, steps: Integer;
-  a, X, X2, Y: Double;
+  stepSin, stepCos: Extended;
+  a, absA: Double;
+  pt, pt2: TPointD;
 begin
-  a := ArcTan2(FSinA, FNorms[k].X * FNorms[j].X + FNorms[k].Y * FNorms[j].Y);
-  steps := Trunc(FStepsPerRad * Abs(a));
+  //a convex vertex ...
 
-  X := FNorms[k].X;
-  Y := FNorms[k].Y;
-  for i := 1 to steps do
+  pt := fInPath[j];
+  pt2.X := fNorms[k].X * fDelta;
+  pt2.Y := fNorms[k].Y * fDelta;
+  AddPoint(pt.X + pt2.X, pt.Y + pt2.Y);
+
+  if isEnd then a := PI
+  else a := ArcTan2(fSinA, fCosA);
+
+  absA := abs(a);
+	if (absA < quarter_pi) then
+		steps := Round(fStepsPerRad * absA) else
+		steps := Max(3, Round(fStepsPerRad * absA));
+
+  if steps > 0 then
   begin
-    AddPoint(Point64(
-      round(FPathIn[j].X + X * FDelta),
-      round(FPathIn[j].Y + Y * FDelta)));
-    X2 := X;
-    X := X * FCos - FSin * Y;
-    Y := X2 * FSin + Y * FCos;
+    Math.SinCos(a / steps, stepSin, stepCos);
+    for i := 1 to steps -1 do
+    begin
+      pt2 := PointD(pt2.X * stepCos - stepSin * pt2.Y,
+        pt2.X * stepSin + pt2.Y * stepCos);
+      AddPoint(pt.X + pt2.X, pt.Y + pt2.Y);
+    end;
   end;
-  AddPoint(Point64(
-    round(FPathIn[j].X + FNorms[j].X * FDelta),
-    round(FPathIn[j].Y + FNorms[j].Y * FDelta)));
+
+  pt := fInPath[j];
+  pt2.X := fNorms[j].X * fDelta;
+  pt2.Y := fNorms[j].Y * fDelta;
+  AddPoint(pt.X + pt2.X, pt.Y + pt2.Y);
 end;
 //------------------------------------------------------------------------------
 
-procedure TClipperOffset.OffsetPoint(j: Integer;
-  var k: Integer; JoinType: TJoinType);
-var
-  cosA: Double;
+procedure TClipperOffset.OffsetPoint(j: Integer; var k: integer);
 begin
-  //A: angle between adjoining paths on left side (left WRT winding direction).
+  //A: angle between adjoining edges (on left side WRT winding direction).
   //A == 0 deg (or A == 360 deg): collinear edges heading in same direction
   //A == 180 deg: collinear edges heading in opposite directions (ie a 'spike')
   //sin(A) < 0: convex on left.
   //cos(A) > 0: angles on both left and right sides > 90 degrees
+  fSinA := (fNorms[k].X * fNorms[j].Y - fNorms[j].X * fNorms[k].Y);
 
-  //cross product ...
-  FSinA := (FNorms[k].X * FNorms[j].Y - FNorms[j].X * FNorms[k].Y);
-  if (Abs(FSinA * FDelta) < 1.0) then //angle is approaching 180 or 360 deg.
+  if (fSinA < 0.01) and (fSinA > -0.01) then
   begin
-    //dot product ...
-    cosA := (FNorms[k].X * FNorms[j].X + FNorms[j].Y * FNorms[k].Y );
-    if (cosA > 0) then //given condition above the angle is approaching 360 deg.
-    begin
-      //with angles approaching 360 deg collinear (whether concave or convex),
-      //offsetting with two or more vertices (that would be so close together)
-      //occasionally causes tiny self-intersections due to rounding.
-      //So we offset with just a single vertex here ...
-      AddPoint(Point64(round(FPathIn[j].X + FNorms[k].X * FDelta),
-        round(FPathIn[j].Y + FNorms[k].Y * FDelta)));
-      Exit;
-    end;
-    //else angle must be approaching 180 deg.
-  end
-  else if (FSinA > 1.0) then FSinA := 1.0
-  else if (FSinA < -1.0) then FSinA := -1.0;
+    k := j;
+    Exit;
+  end;
 
-  if FSinA * FDelta < 0 then //ie a concave offset
+  if (fSinA > 1.0) then fSinA := 1.0
+  else if (fSinA < -1.0) then fSinA := -1.0;
+
+  if fSinA * fDelta < 0 then //ie a concave offset
   begin
-    AddPoint(Point64(round(FPathIn[j].X + FNorms[k].X * FDelta),
-      round(FPathIn[j].Y + FNorms[k].Y * FDelta)));
-    AddPoint(FPathIn[j]); //this improves clipping removal later
-    AddPoint(Point64(round(FPathIn[j].X + FNorms[j].X * FDelta),
-      round(FPathIn[j].Y + FNorms[j].Y * FDelta)));
-  end
-  else
+    AddPoint(fInPath[j].X + fNorms[k].X * fDelta,
+      fInPath[j].Y + fNorms[k].Y * fDelta);
+    AddPoint(fInPath[j]); //this aids with clipping removal later
+    AddPoint(fInPath[j].X + fNorms[j].X * fDelta,
+      fInPath[j].Y + fNorms[j].Y * fDelta);
+  end else
   begin
     //convex offsets here ...
-    case JoinType of
+    case fJoinType of
       jtMiter:
-      begin
-        cosA := (FNorms[j].X * FNorms[k].X + FNorms[j].Y * FNorms[k].Y);
         //see offset_triginometry3.svg
-        if (1 + cosA < FMiterLim) then DoSquare(j, k)
-        else DoMiter(j, k, 1 + cosA);
-      end;
+        if (1 + fCosA < fTmpLimit) then DoSquare(j, k)
+        else DoMiter(j, k, 1 + fCosA);
       jtSquare:
+        begin
+          fCosA := (fNorms[j].X * fNorms[k].X + fNorms[j].Y * fNorms[k].Y);
+          //angles >= 90 deg. don't need squaring
+          if fCosA >= 0 then
+            DoMiter(j, k, 1 + fCosA) else
+            DoSquare(j, k);
+        end
+      else
       begin
-        cosA := (FNorms[k].X * FNorms[j].X + FNorms[j].Y * FNorms[k].Y );
-        if cosA >= 0 then //angles >= 90 deg. don't need squaring
-          DoMiter(j, k, 1 + cosA) else
-          DoSquare(j, k);
+        fCosA := (fNorms[j].X * fNorms[k].X + fNorms[j].Y * fNorms[k].Y);
+        DoRound(j, k, false);
       end;
-      jtRound: DoRound(j, k);
     end;
   end;
   k := j;
@@ -635,32 +678,32 @@ end;
 //------------------------------------------------------------------------------
 
 function ClipperOffsetPaths(const paths: TPaths;
-  delta: Double; jt: TJoinType; et: TEndType): TPaths;
+  delta: Double; jt: TJoinType; et: TEndType; miterLimit: double): TPaths;
+var
+  pp: TPathsD;
 begin
-  with TClipperOffset.Create do
+  pp := ScalePathsD(paths, 100, 100);
+  with TClipperOffset.Create(miterLimit) do
   try
-    AddPaths(paths, jt, et);
-    Execute(Result, delta);
+    AddPaths(pp, jt, et);
+    Execute(delta, pp);
   finally
     free;
   end;
+  Result := ScalePaths(pp, 0.01, 0.01);
 end;
 //------------------------------------------------------------------------------
 
 function ClipperOffsetPaths(const paths: TPathsD;
-  delta: Double; jt: TJoinType; et: TEndType): TPathsD;
-var
-  paths64, sol64: TPaths;
+  delta: Double; jt: TJoinType; et: TEndType; miterLimit: double): TPathsD;
 begin
-  paths64 := ScalePaths(paths, 1000, 1000);
-  with TClipperOffset.Create do
+  with TClipperOffset.Create(miterLimit) do
   try
-    AddPaths(paths64, jt, et);
-    Execute(sol64, delta*1000);
+    AddPaths(paths, jt, et);
+    Execute(delta, Result);
   finally
     free;
   end;
-  Result := ScalePathsD(sol64, 0.001, 0.001);
 end;
 //------------------------------------------------------------------------------
 
