@@ -1,11 +1,11 @@
- /*******************************************************************************
+/*******************************************************************************
 * Author    :  Angus Johnson                                                   *
 * Version   :  10.0 (beta)                                                     *
-* Date      :  27 March 2019                                                   *
+* Date      :  2 November 2020                                                 *
 * Website   :  http://www.angusj.com                                           *
-* Copyright :  Angus Johnson 2010-2017                                         *
-* Purpose   :  Base clipping module                                            *
-* License   : http://www.boost.org/LICENSE_1_0.txt                             *
+* Copyright :  Angus Johnson 2010-2020                                         *
+* Purpose   :  Polygon 'clipping' (boolean operations on polygons)             *
+* License   :  http://www.boost.org/LICENSE_1_0.txt                            *
 *******************************************************************************/
 
 #include <stdlib.h>
@@ -18,41 +18,42 @@
 #include <ostream>
 #include <stdexcept>
 #include <vector>
+#include <list>
 #include "clipper.h"
 
 namespace clipperlib {
 
-//------------------------------------------------------------------------------
-// Template specialization declarations ...
-//------------------------------------------------------------------------------
+	//------------------------------------------------------------------------------
+	// Template specialization declarations ...
+	//------------------------------------------------------------------------------
 
-  template class PolyTree<cInt>;
-  template class PolyTree<double>;
+	template class PolyTree<cInt>;
+	template class PolyTree<double>;
 
-//------------------------------------------------------------------------------
-// Miscellaneous structures etc.
-//------------------------------------------------------------------------------
+	//------------------------------------------------------------------------------
+	// Miscellaneous structures etc.
+	//------------------------------------------------------------------------------
 
-static const double DefaultScale = 100;
+	enum class VertexFlags : uint32_t {
+		vfNone = 0, vfOpenStart = 1, vfOpenEnd = 2, vfLocalMax = 4, vfLocMin = 8
+	};
 
-enum VertexFlags { vfNone = 0,
-	vfOpenStart = 1,
-	vfOpenEnd = 2,
-	vfLocalMax = 4,
-	vfLocMin = 8 };
-inline VertexFlags operator|(VertexFlags a, VertexFlags b) {
-	return static_cast<VertexFlags>(static_cast<int>(a) | static_cast<int>(b));
-}
-inline VertexFlags &operator|=(VertexFlags &a, VertexFlags b) {
-	return a = a | b;
-}
+	constexpr enum VertexFlags operator &(enum VertexFlags a, enum VertexFlags b) {
+		return (enum VertexFlags)(uint32_t(a) & uint32_t(b));
+	};
 
-struct Vertex {
-	PointI pt;
-	Vertex *next;
-	Vertex *prev;
-	VertexFlags flags;
-};
+	constexpr enum VertexFlags operator |(enum VertexFlags a, enum VertexFlags b) {
+		return (enum VertexFlags)(uint32_t(a) | uint32_t(b));
+	};
+
+	static const double DefaultScale = 100;
+
+	struct Vertex {
+		PointI pt;
+		Vertex *next = NULL;
+		Vertex *prev = NULL;
+		VertexFlags flags = VertexFlags::vfNone;
+	};
 
 //Every closed path (or polygon) is made up of a series of vertices forming
 //edges that alternate between going up (relative to the Y-axis) and going
@@ -61,20 +62,20 @@ struct Vertex {
 //vertices where descending bounds become ascending ones.
 
 struct LocalMinima {
-	Vertex *vertex;
-	PathType polytype;
-	bool is_open;
+	Vertex *vertex = NULL;
+	PathType polytype = PathType::Subject;
+	bool is_open = false;
 };
 
 struct Scanline {
-	cInt y;
-	Scanline *next;
+	cInt y = 0;
+	Scanline *next = NULL;
 };
 
 struct IntersectNode {
 	PointI pt;
-	Active *edge1;
-	Active *edge2;
+	Active *edge1 = NULL;
+	Active *edge2 = NULL;
 };
 
 struct LocMinSorter {
@@ -93,18 +94,18 @@ inline bool IsOdd(int val) {
 //------------------------------------------------------------------------------
 
 inline void SetCheckFlag(OutRec &outrec) {
-	if (outrec.state == osInner)
-		outrec.state = osInnerCheck;
-	else if (outrec.state == osOuter)
-		outrec.state = osOuterCheck;
+	if (outrec.state == OutRecState::Inner)
+		outrec.state = OutRecState::InnerCheck;
+	else if (outrec.state == OutRecState::Outer)
+		outrec.state = OutRecState::OuterCheck;
 }
 //------------------------------------------------------------------------------
 
 inline void UnsetCheckFlag(OutRec &outrec) {
-	if (outrec.state == osInnerCheck)
-		outrec.state = osInner;
-	else if (outrec.state == osOuterCheck)
-		outrec.state = osOuter;
+	if (outrec.state == OutRecState::InnerCheck)
+		outrec.state = OutRecState::Inner;
+	else if (outrec.state == OutRecState::OuterCheck)
+		outrec.state = OutRecState::Outer;
 }
 //------------------------------------------------------------------------------
 
@@ -119,7 +120,7 @@ inline bool IsOpen(const Active &e) {
 //------------------------------------------------------------------------------
 
 inline bool IsOpen(const OutRec &outrec) {
-	return (outrec.state == osOpen);
+	return (outrec.state == OutRecState::Open);
 }
 //------------------------------------------------------------------------------
 
@@ -132,22 +133,22 @@ inline Active *GetPrevHotEdge(Active &e) {
 //------------------------------------------------------------------------------
 
 inline bool IsOuter(const OutRec &outrec) {
-	return (outrec.state == osOuter || outrec.state == osOuterCheck);
+	return (outrec.state == OutRecState::Outer || outrec.state == OutRecState::OuterCheck);
 }
 //------------------------------------------------------------------------------
 
 inline void SetAsOuter(OutRec &outrec) {
-	outrec.state = osOuter;
+	outrec.state = OutRecState::Outer;
 }
 //------------------------------------------------------------------------------
 
 inline bool IsInner(const OutRec &outrec) {
-	return (outrec.state == osInner || outrec.state == osInnerCheck);
+	return (outrec.state == OutRecState::Inner || outrec.state == OutRecState::InnerCheck);
 }
 //------------------------------------------------------------------------------
 
 inline void SetAsInner(OutRec &outrec) {
-	outrec.state = osInner;
+	outrec.state = OutRecState::Inner;
 }
 //------------------------------------------------------------------------------
 
@@ -184,7 +185,7 @@ inline cInt TopX(const Active &e, const cInt currentY) {
 	if ((currentY == e.top.y) || (e.top.x == e.bot.x))
 		return e.top.x;
 	else
-		return e.bot.x + (cInt)round(e.dx * (currentY - e.bot.y));
+		return e.bot.x + (cInt)std::round(e.dx * (currentY - e.bot.y));
 }
 //------------------------------------------------------------------------------
 
@@ -197,7 +198,7 @@ inline cInt TopX(const PointI pt1, const PointI pt2, const cInt y) {
 		return pt2.x;
 	else {
 		double dx = GetDx(pt1, pt2);
-		return pt1.x + (cInt)round(dx * (y - pt1.y));
+		return pt1.x + (cInt)std::round(dx * (y - pt1.y));
 	}
 }
 //------------------------------------------------------------------------------
@@ -241,18 +242,18 @@ PointI GetIntersectPoint(const Active &e1, const Active &e2) {
 	if (e1.dx == 0) {
 		if (IsHorizontal(e2)) return PointI(e1.bot.x, e2.bot.y);
 		b2 = e2.bot.y - (e2.bot.x / e2.dx);
-		return PointI(e1.bot.x, (cInt)round(e1.bot.x / e2.dx + b2));
+		return PointI(e1.bot.x, (cInt)std::round(e1.bot.x / e2.dx + b2));
 	} else if (e2.dx == 0) {
 		if (IsHorizontal(e1)) return PointI(e2.bot.x, e1.bot.y);
 		b1 = e1.bot.y - (e1.bot.x / e1.dx);
-		return PointI(e2.bot.x, (cInt)round(e2.bot.x / e1.dx + b1));
+		return PointI(e2.bot.x, (cInt)std::round(e2.bot.x / e1.dx + b1));
 	} else {
 		b1 = e1.bot.x - e1.bot.y * e1.dx;
 		b2 = e2.bot.x - e2.bot.y * e2.dx;
 		double q = (b2 - b1) / (e1.dx - e2.dx);
 		return (abs(e1.dx) < abs(e2.dx)) ?
-			PointI(round(e1.dx * q + b1), round(q)) :
-			PointI(round(e2.dx * q + b2), round(q));
+			PointI((cInt)std::round(e1.dx * q + b1), (cInt)std::round(q)) :
+			PointI((cInt)std::round(e2.dx * q + b2), (cInt)std::round(q));
 	}
 }
 //------------------------------------------------------------------------------
@@ -302,7 +303,7 @@ inline bool IsClockwise(OutPt &op) {
 //------------------------------------------------------------------------------
 
 inline bool IsMaxima(const Active &e) {
-	return (e.vertex_top->flags & vfLocalMax);
+	return ((e.vertex_top->flags & VertexFlags::vfLocalMax) != VertexFlags::vfNone);
 }
 //------------------------------------------------------------------------------
 
@@ -519,7 +520,7 @@ void SetOwnerAndInnerOuterState(Active &e) {
 
 	if (IsOpen(e)) {
 		outrec->owner = NULL;
-		outrec->state = osOpen;
+		outrec->state = OutRecState::Open;
 		return;
 	}
 	//set owner ...
@@ -529,7 +530,7 @@ void SetOwnerAndInnerOuterState(Active &e) {
 			e2 = e2->next_in_ael;
 		if (!e2)
 			outrec->owner = NULL;
-		else if ((e2->outrec->state == osOuter) == (e2->outrec->front_e == e2))
+		else if ((e2->outrec->state == OutRecState::Outer) == (e2->outrec->front_e == e2))
 			outrec->owner = e2->outrec->owner;
 		else
 			outrec->owner = e2->outrec;
@@ -546,9 +547,9 @@ void SetOwnerAndInnerOuterState(Active &e) {
 	}
 	//set inner/outer ...
 	if (!outrec->owner || IsInner(*outrec->owner))
-		outrec->state = osOuter;
+		outrec->state = OutRecState::Outer;
 	else
-		outrec->state = osInner;
+		outrec->state = OutRecState::Inner;
 }
 //------------------------------------------------------------------------------
 
@@ -641,8 +642,8 @@ void Clipper::DisposeVerticesAndLocalMinima() {
 
 void Clipper::AddLocMin(Vertex &vert, PathType polytype, bool is_open) {
 	//make sure the vertex is added only once ...
-	if (vfLocMin & vert.flags) return;
-	vert.flags |= vfLocMin;
+	if ((VertexFlags::vfLocMin & vert.flags) != VertexFlags::vfNone) return;
+	vert.flags = (vert.flags | VertexFlags::vfLocMin);
 
 	LocalMinima *lm = new LocalMinima();
 	lm->vertex = &vert;
@@ -653,8 +654,9 @@ void Clipper::AddLocMin(Vertex &vert, PathType polytype, bool is_open) {
 //----------------------------------------------------------------------------
 
 void Clipper::AddPathToVertexList(const PathI &path, PathType polytype, bool is_open) {
-	int path_len = (int)path.size();
-	while (path_len > 1 && (path[path_len - 1] == path[0])) --path_len;
+	size_t path_len = (int)path.size();
+  if (!is_open) 
+    while (path_len > 1 && (path[size_t(path_len - 1)] == path[0])) --path_len;
 	if (path_len < 2) return;
 
 	int i = 1;
@@ -682,14 +684,14 @@ void Clipper::AddPathToVertexList(const PathI &path, PathType polytype, bool is_
 	vertex_list_.push_back(vertices);
 
 	vertices[0].pt = path[0];
-	vertices[0].flags = vfNone;
+	vertices[0].flags = VertexFlags::vfNone;
 
 	if (is_open) {
-		vertices[0].flags |= vfOpenStart;
+		vertices[0].flags = (vertices[0].flags | VertexFlags::vfOpenStart);
 		if (going_up)
 			AddLocMin(vertices[0], polytype, is_open);
 		else
-			vertices[0].flags |= vfLocalMax;
+			vertices[0].flags = (vertices[0].flags | VertexFlags::vfLocalMax);
 	}
 
 	//nb: polygon orientation is determined later (see InsertLocalMinimaIntoAEL).
@@ -698,11 +700,11 @@ void Clipper::AddPathToVertexList(const PathI &path, PathType polytype, bool is_
 		if (path[j] == vertices[i].pt) continue;  //ie skips duplicates
 		vertices[j].pt = path[j];
 
-		vertices[j].flags = vfNone;
+		vertices[j].flags = VertexFlags::vfNone;
 		vertices[i].next = &vertices[j];
 		vertices[j].prev = &vertices[i];
 		if (path[j].y > path[i].y && going_up) {
-			vertices[i].flags |= vfLocalMax;
+			vertices[i].flags = (vertices[i].flags | VertexFlags::vfLocalMax);
 			going_up = false;
 		} else if (path[j].y < path[i].y && !going_up) {
 			going_up = true;
@@ -715,16 +717,16 @@ void Clipper::AddPathToVertexList(const PathI &path, PathType polytype, bool is_
 	vertices[0].prev = &vertices[i];
 
 	if (is_open) {
-		vertices[i].flags |= vfOpenEnd;
+		vertices[i].flags = vertices[i].flags | VertexFlags::vfOpenEnd;
 		if (going_up)
-			vertices[i].flags |= vfLocalMax;
+			vertices[i].flags = vertices[i].flags | VertexFlags::vfLocalMax;
 		else
 			AddLocMin(vertices[i], polytype, is_open);
 	} else if (going_up) {
 		//going up so find local maxima ...
 		Vertex *v = &vertices[i];
 		while (v->next->pt.y <= v->pt.y) v = v->next;
-		v->flags |= vfLocalMax;
+		v->flags = v->flags | VertexFlags::vfLocalMax;
 		if (p0_is_minima) AddLocMin(vertices[0], polytype, is_open);
 	} else {
 		//going down so find local minima ...
@@ -732,14 +734,14 @@ void Clipper::AddPathToVertexList(const PathI &path, PathType polytype, bool is_
 		while (v->next->pt.y >= v->pt.y) v = v->next;
 		AddLocMin(*v, polytype, is_open);
 		if (p0_is_maxima)
-			vertices[0].flags |= vfLocalMax;
+			vertices[0].flags = vertices[0].flags | VertexFlags::vfLocalMax;
 	}
 }
 //------------------------------------------------------------------------------
 
 void Clipper::AddPath(const PathI &path, PathType polytype, bool is_open) {
 	if (is_open) {
-		if (polytype == ptClip)
+		if (polytype == PathType::Clip)
 			throw ClipperLibException("AddPath: Only subject paths may be open.");
 		has_open_paths_ = true;
 	}
@@ -756,13 +758,13 @@ void Clipper::AddPaths(const PathsI &paths, PathType polytype, bool is_open) {
 
 bool Clipper::IsContributingClosed(const Active &e) const {
 	switch (fillrule_) {
-		case frNonZero:
+		case FillRule::NonZero :
 			if (abs(e.wind_cnt) != 1) return false;
 			break;
-		case frPositive:
+		case FillRule::Positive:
 			if (e.wind_cnt != 1) return false;
 			break;
-		case frNegative:
+		case FillRule::Negative:
 			if (e.wind_cnt != -1) return false;
 			break;
 		default:
@@ -770,39 +772,39 @@ bool Clipper::IsContributingClosed(const Active &e) const {
 	}
 
 	switch (cliptype_) {
-		case ctIntersection:
+	case ClipType::Intersection:
 			switch (fillrule_) {
-				case frEvenOdd:
-				case frNonZero: return (e.wind_cnt2 != 0);
-				case frPositive: return (e.wind_cnt2 > 0);
-				case frNegative: return (e.wind_cnt2 < 0);
+				case FillRule::EvenOdd:
+				case FillRule::NonZero : return (e.wind_cnt2 != 0);
+				case FillRule::Positive: return (e.wind_cnt2 > 0);
+				case FillRule::Negative: return (e.wind_cnt2 < 0);
 			}
 			break;
-		case ctUnion:
+		case ClipType::Union:
 			switch (fillrule_) {
-				case frEvenOdd:
-				case frNonZero: return (e.wind_cnt2 == 0);
-				case frPositive: return (e.wind_cnt2 <= 0);
-				case frNegative: return (e.wind_cnt2 >= 0);
+				case FillRule::EvenOdd:
+				case FillRule::NonZero : return (e.wind_cnt2 == 0);
+				case FillRule::Positive: return (e.wind_cnt2 <= 0);
+				case FillRule::Negative: return (e.wind_cnt2 >= 0);
 			}
 			break;
-		case ctDifference:
-			if (GetPolyType(e) == ptSubject)
+		case ClipType::Difference:
+			if (GetPolyType(e) == PathType::Subject)
 				switch (fillrule_) {
-					case frEvenOdd:
-					case frNonZero: return (e.wind_cnt2 == 0);
-					case frPositive: return (e.wind_cnt2 <= 0);
-					case frNegative: return (e.wind_cnt2 >= 0);
+					case FillRule::EvenOdd:
+					case FillRule::NonZero : return (e.wind_cnt2 == 0);
+					case FillRule::Positive: return (e.wind_cnt2 <= 0);
+					case FillRule::Negative: return (e.wind_cnt2 >= 0);
 				}
 			else
 				switch (fillrule_) {
-					case frEvenOdd:
-					case frNonZero: return (e.wind_cnt2 != 0);
-					case frPositive: return (e.wind_cnt2 > 0);
-					case frNegative: return (e.wind_cnt2 < 0);
+				case FillRule::EvenOdd:
+					case FillRule::NonZero : return (e.wind_cnt2 != 0);
+					case FillRule::Positive: return (e.wind_cnt2 > 0);
+					case FillRule::Negative: return (e.wind_cnt2 < 0);
 				}
 			break;
-		case ctXor:
+		case ClipType::Xor:
 			return true;  //XOr is always contributing unless open
 		default:
 			return false;  // delphi2cpp translation note: no warnings
@@ -813,10 +815,10 @@ bool Clipper::IsContributingClosed(const Active &e) const {
 
 inline bool Clipper::IsContributingOpen(const Active &e) const {
 	switch (cliptype_) {
-		case ctIntersection: return (e.wind_cnt2 != 0);
-		case ctUnion: return (e.wind_cnt == 0 && e.wind_cnt2 == 0);
-		case ctDifference: return (e.wind_cnt2 == 0);
-		case ctXor: return (e.wind_cnt != 0) != (e.wind_cnt2 != 0);
+		case ClipType::Intersection: return (e.wind_cnt2 != 0);
+		case ClipType::Union: return (e.wind_cnt == 0 && e.wind_cnt2 == 0);
+		case ClipType::Difference: return (e.wind_cnt2 == 0);
+		case ClipType::Xor: return (e.wind_cnt != 0) != (e.wind_cnt2 != 0);
 		default:
 			return false;  // delphi2cpp translation note: no warnings
 	}
@@ -838,7 +840,7 @@ void Clipper::SetWindCountForClosedPathEdge(Active &e) {
 	if (!e2) {
 		e.wind_cnt = e.wind_dx;
 		e2 = actives_;
-	} else if (fillrule_ == frEvenOdd) {
+	} else if (fillrule_ == FillRule::EvenOdd) {
 		e.wind_cnt = e.wind_dx;
 		e.wind_cnt2 = e2->wind_cnt2;
 		e2 = e2->next_in_ael;
@@ -874,7 +876,7 @@ void Clipper::SetWindCountForClosedPathEdge(Active &e) {
 	}
 
 	//update wind_cnt2 ...
-	if (fillrule_ == frEvenOdd)
+	if (fillrule_ == FillRule::EvenOdd)
 		while (e2 != &e) {
 			if (GetPolyType(*e2) != pt && !IsOpen(*e2))
 				e.wind_cnt2 = (e.wind_cnt2 == 0 ? 1 : 0);
@@ -891,10 +893,10 @@ void Clipper::SetWindCountForClosedPathEdge(Active &e) {
 
 void Clipper::SetWindCountForOpenPathEdge(Active &e) {
 	Active *e2 = actives_;
-	if (fillrule_ == frEvenOdd) {
+	if (fillrule_ == FillRule::EvenOdd) {
 		int cnt1 = 0, cnt2 = 0;
 		while (e2 != &e) {
-			if (GetPolyType(*e2) == ptClip)
+			if (GetPolyType(*e2) == PathType::Clip)
 				cnt2++;
 			else if (!IsOpen(*e2))
 				cnt1++;
@@ -904,7 +906,7 @@ void Clipper::SetWindCountForOpenPathEdge(Active &e) {
 		e.wind_cnt2 = (IsOdd(cnt2) ? 1 : 0);
 	} else {
 		while (e2 != &e) {
-			if (GetPolyType(*e2) == ptClip)
+			if (GetPolyType(*e2) == PathType::Clip)
 				e.wind_cnt2 += e2->wind_dx;
 			else if (!IsOpen(*e2))
 				e.wind_cnt += e2->wind_dx;
@@ -1002,7 +1004,7 @@ void Clipper::InsertLocalMinimaIntoAEL(cInt bot_y) {
 	//nb: horizontal local minima edges should contain locMin.vertex.prev
 
 	while (PopLocalMinima(bot_y, local_minima)) {
-		if ((local_minima->vertex->flags & vfOpenStart) > 0) {
+		if ((local_minima->vertex->flags & VertexFlags::vfOpenStart) != VertexFlags::vfNone) {
 			left_bound = NULL;
 		} else {
 			left_bound = new Active();
@@ -1015,7 +1017,7 @@ void Clipper::InsertLocalMinimaIntoAEL(cInt bot_y) {
 			SetDx(*left_bound);
 		}
 
-		if ((local_minima->vertex->flags & vfOpenEnd) > 0) {
+		if ((local_minima->vertex->flags & VertexFlags::vfOpenEnd) != VertexFlags::vfNone) {
 			right_bound = NULL;
 		} else {
 			right_bound = new Active();
@@ -1095,7 +1097,7 @@ OutRec *Clipper::GetOwner(const Active *e) {
 		while (e && (!IsHotEdge(*e) || IsOpen(*e)))
 			e = e->next_in_ael;
 		if (!e) return NULL;
-		return ((e->outrec->state == osOuter) == (e->outrec->front_e == e)) ?
+		return ((e->outrec->state == OutRecState::Outer) == (e->outrec->front_e == e)) ?
 					   e->outrec->owner :
 					   e->outrec;
 	} else {
@@ -1103,7 +1105,7 @@ OutRec *Clipper::GetOwner(const Active *e) {
 		while (e && (!IsHotEdge(*e) || IsOpen(*e)))
 			e = e->prev_in_ael;
 		if (!e) return NULL;
-		return ((e->outrec->state == osOuter) == (e->outrec->back_e == e)) ?
+		return ((e->outrec->state == OutRecState::Outer) == (e->outrec->back_e == e)) ?
 					   e->outrec->owner :
 					   e->outrec;
 	}
@@ -1150,7 +1152,7 @@ void Clipper::AddLocalMaxPoly(Active &e1, Active &e2, const PointI pt) {
 	// AddOutPt(e2, pt); //this may no longer be necessary
 
 	if (e1.outrec == e2.outrec) {
-		if (e1.outrec->state == osOuterCheck || e1.outrec->state == osInnerCheck)
+		if (e1.outrec->state == OutRecState::OuterCheck || e1.outrec->state == OutRecState::InnerCheck)
 			RecheckInnerOuter(e1);
 
 		//nb: IsClockwise() is generally faster than Area() but will occasionally
@@ -1284,7 +1286,7 @@ void Clipper::StartOpenPath(Active &e, const PointI pt) {
 	outrec->idx = (unsigned)outrec_list_.size();
 	outrec_list_.push_back(outrec);
 	outrec->owner = NULL;
-	outrec->state = osOpen;
+	outrec->state = OutRecState::Open;
 	outrec->pts = NULL;
 	outrec->PolyTree = NULL;
 	outrec->back_e = NULL;
@@ -1323,15 +1325,15 @@ void Clipper::IntersectEdges(Active &e1, Active &e2, const PointI pt, bool orien
 		}
 
 		switch (cliptype_) {
-			case ctIntersection:
-			case ctDifference:
+			case ClipType::Intersection:
+			case ClipType::Difference:
 				if (IsSamePolyType(*edge_o, *edge_c) || (abs(edge_c->wind_cnt) != 1)) return;
 				break;
-			case ctUnion:
+			case ClipType::Union:
 				if (IsHotEdge(*edge_o) != ((abs(edge_c->wind_cnt) != 1) ||
 												  (IsHotEdge(*edge_o) != (edge_c->wind_cnt != 0)))) return;  //just works!
 				break;
-			case ctXor:
+			case ClipType::Xor:
 				if (abs(edge_c->wind_cnt) != 1) return;
 				break;
 		}
@@ -1348,7 +1350,7 @@ void Clipper::IntersectEdges(Active &e1, Active &e2, const PointI pt, bool orien
 
 	int old_e1_windcnt, old_e2_windcnt;
 	if (e1.local_min->polytype == e2.local_min->polytype) {
-		if (fillrule_ == frEvenOdd) {
+		if (fillrule_ == FillRule::EvenOdd) {
 			old_e1_windcnt = e1.wind_cnt;
 			e1.wind_cnt = e2.wind_cnt;
 			e2.wind_cnt = old_e1_windcnt;
@@ -1363,22 +1365,22 @@ void Clipper::IntersectEdges(Active &e1, Active &e2, const PointI pt, bool orien
 				e2.wind_cnt -= e1.wind_dx;
 		}
 	} else {
-		if (fillrule_ != frEvenOdd)
+		if (fillrule_ != FillRule::EvenOdd)
 			e1.wind_cnt2 += e2.wind_dx;
 		else
 			e1.wind_cnt2 = (e1.wind_cnt2 == 0 ? 1 : 0);
-		if (fillrule_ != frEvenOdd)
+		if (fillrule_ != FillRule::EvenOdd)
 			e2.wind_cnt2 -= e1.wind_dx;
 		else
 			e2.wind_cnt2 = (e2.wind_cnt2 == 0 ? 1 : 0);
 	}
 
 	switch (fillrule_) {
-		case frPositive:
+		case FillRule::Positive:
 			old_e1_windcnt = e1.wind_cnt;
 			old_e2_windcnt = e2.wind_cnt;
 			break;
-		case frNegative:
+		case FillRule::Negative:
 			old_e1_windcnt = -e1.wind_cnt;
 			old_e2_windcnt = -e2.wind_cnt;
 			break;
@@ -1399,7 +1401,7 @@ void Clipper::IntersectEdges(Active &e1, Active &e2, const PointI pt, bool orien
 	//if both edges are 'hot' ...
 	if (IsHotEdge(e1) && IsHotEdge(e2)) {
 		if ((old_e1_windcnt != 0 && old_e1_windcnt != 1) || (old_e2_windcnt != 0 && old_e2_windcnt != 1) ||
-				(e1.local_min->polytype != e2.local_min->polytype && cliptype_ != ctXor)) {
+				(e1.local_min->polytype != e2.local_min->polytype && cliptype_ != ClipType::Xor)) {
 			AddLocalMaxPoly(e1, e2, pt);
 		} else if (IsFront(e1) || (e1.outrec == e2.outrec)) {
 			AddLocalMaxPoly(e1, e2, pt);
@@ -1421,11 +1423,11 @@ void Clipper::IntersectEdges(Active &e1, Active &e2, const PointI pt, bool orien
 	} else {  //neither edge is 'hot'
 		cInt e1Wc2, e2Wc2;
 		switch (fillrule_) {
-			case frPositive:
+		case FillRule::Positive:
 				e1Wc2 = e1.wind_cnt2;
 				e2Wc2 = e2.wind_cnt2;
 				break;
-			case frNegative:
+			case FillRule::Negative:
 				e1Wc2 = -e1.wind_cnt2;
 				e2Wc2 = -e2.wind_cnt2;
 				break;
@@ -1439,21 +1441,21 @@ void Clipper::IntersectEdges(Active &e1, Active &e2, const PointI pt, bool orien
 			AddLocalMinPoly(e1, e2, pt, false, orientation_check_required);
 		} else if (old_e1_windcnt == 1 && old_e2_windcnt == 1)
 			switch (cliptype_) {
-				case ctIntersection:
+				case ClipType::Intersection:
 					if (e1Wc2 > 0 && e2Wc2 > 0)
 						AddLocalMinPoly(e1, e2, pt, false, orientation_check_required);
 					break;
-				case ctUnion:
+				case ClipType::Union:
 					if (e1Wc2 <= 0 && e2Wc2 <= 0)
 						AddLocalMinPoly(e1, e2, pt, false, orientation_check_required);
 					break;
-				case ctDifference:
-					if (((GetPolyType(e1) == ptClip) && (e1Wc2 > 0) && (e2Wc2 > 0)) ||
-							((GetPolyType(e1) == ptSubject) && (e1Wc2 <= 0) && (e2Wc2 <= 0))) {
+				case ClipType::Difference:
+					if (((GetPolyType(e1) == PathType::Clip) && (e1Wc2 > 0) && (e2Wc2 > 0)) ||
+							((GetPolyType(e1) == PathType::Subject) && (e1Wc2 <= 0) && (e2Wc2 <= 0))) {
 						AddLocalMinPoly(e1, e2, pt, false, orientation_check_required);
 					}
 					break;
-				case ctXor:
+				case ClipType::Xor:
 					AddLocalMinPoly(e1, e2, pt, false, orientation_check_required);
 					break;
 				default:
@@ -1490,7 +1492,7 @@ inline void Clipper::AdjustCurrXAndCopyToSEL(const cInt top_y) {
 //------------------------------------------------------------------------------
 
 void Clipper::ExecuteInternal(ClipType ct, FillRule ft) {
-	if (ct == ctNone) return;
+	if (ct == ClipType::None) return;
 	fillrule_ = ft;
 	cliptype_ = ct;
 	Reset();
@@ -1614,7 +1616,7 @@ bool Clipper::BuildIntersectList(const cInt top_y) {
 	//Re merge sorts see https://stackoverflow.com/a/46319131/359538
 	int jump_size = 1;
 	while (true) {
-		Active *first = sel_, *second = NULL, *base_e, *prev_base = NULL, *tmp;
+		Active *first = sel_, *second = NULL, *base_e = NULL, *prev_base = NULL;
 		//sort successive larger jump counts of nodes ...
 		while (first) {
 			if (jump_size == 1) {
@@ -1634,6 +1636,7 @@ bool Clipper::BuildIntersectList(const cInt top_y) {
 			}
 
 			//now sort first and second groups ...
+			Active* tmp = NULL;
 			base_e = first;
 			int left_cnt = jump_size, right_cnt = jump_size;
 			while (left_cnt > 0 && right_cnt > 0) {
@@ -1643,7 +1646,8 @@ bool Clipper::BuildIntersectList(const cInt top_y) {
 					//create intersect 'node' events for each time 'second' needs to
 					//move left, ie intersecting with its prior edge ...
 					for (int i = 0; i < left_cnt; ++i) {
-						//create a new intersect node...
+						//create a new intersect node.
+						//nb: 'tmp' will always be assigned 
 						AddNewIntersectNode(*tmp, *second, top_y);
 						tmp = tmp->prev_in_sel;
 					}
@@ -1679,7 +1683,7 @@ bool Clipper::BuildIntersectList(const cInt top_y) {
 			first = base_e->jump;
 			prev_base = base_e;
 		}
-		if (!sel_->jump)
+		if (!sel_->jump) //this is safe because 'sel' is always assigned
 			break;
 		else
 			jump_size <<= 1;
@@ -1784,7 +1788,7 @@ void Clipper::DoHorizontal(Active &horz)
 
 	Active *max_pair = NULL;
 	if (IsMaxima(horz) && (!IsOpen(horz) ||
-								  ((horz.vertex_top->flags & (vfOpenStart | vfOpenEnd)) == 0)))
+		((horz.vertex_top->flags & (VertexFlags::vfOpenStart | VertexFlags::vfOpenEnd)) == VertexFlags::vfNone)))
 		max_pair = GetMaximaPair(horz);
 
 	cInt horz_left, horz_right;
@@ -1898,7 +1902,7 @@ Active *Clipper::DoMaxima(Active &e) {
 	Active *next_e, *prev_e, *max_pair;
 	prev_e = e.prev_in_ael;
 	next_e = e.next_in_ael;
-	if (IsOpen(e) && ((e.vertex_top->flags & (vfOpenStart | vfOpenEnd)) != 0)) {
+	if (IsOpen(e) && ((e.vertex_top->flags & (VertexFlags::vfOpenStart | VertexFlags::vfOpenEnd)) != VertexFlags::vfNone)) {
 		if (IsHotEdge(e)) AddOutPt(e, e.top);
 		if (!IsHorizontal(e)) {
 			if (IsHotEdge(e)) TerminateHotOpen(e);
@@ -1959,14 +1963,14 @@ bool Clipper::BuildResultI(PathsI &solution_closed, PathsI *solution_open) {
       //fixup for duplicate start and end points ...
       if (op->pt == outrec->pts->pt) cnt--;
 
-      bool is_open = (outrec->state == osOpen);
+      bool is_open = (outrec->state == OutRecState::Open);
       if (cnt < 2 || (!is_open && cnt == 2) || (is_open && !solution_open)) continue;
       PathI p;
       p.reserve(cnt);
       if (scale_ != 1.0) {
         for (int i = 0; i < cnt; i++) {
-          p.push_back(PointI((cInt)round(op->pt.x * inv_scale),
-            (cInt)round(op->pt.y * inv_scale)));
+          p.push_back(PointI((cInt)std::round(op->pt.x * inv_scale),
+            (cInt)std::round(op->pt.y * inv_scale)));
           op = op->next;
         }
       }
@@ -2011,7 +2015,7 @@ bool Clipper::BuildResultTreeI(PolyTreeI &pt, PathsI *solution_open) {
       //fixup for duplicate start and } points ...
       if (op->pt == outrec->pts->pt) cnt--;
 
-      bool is_open = (outrec->state == osOpen);
+      bool is_open = (outrec->state == OutRecState::Open);
       if (cnt < 2 || (!is_open && cnt == 2) || (is_open && !solution_open)) 
         continue;
 
@@ -2019,8 +2023,8 @@ bool Clipper::BuildResultTreeI(PolyTreeI &pt, PathsI *solution_open) {
       p.reserve(cnt);
       if (scale_ != 1.0) {
         for (int i = 0; i < cnt; i++) {
-          p.push_back(PointI((cInt)round(op->pt.x * inv_scale), 
-            (cInt)round(op->pt.y * inv_scale)));
+          p.push_back(PointI((cInt)std::round(op->pt.x * inv_scale),
+            (cInt)std::round(op->pt.y * inv_scale)));
           op = op->next;
         }
       }
@@ -2069,10 +2073,10 @@ RectI Clipper::GetBounds() {
 	}
   if (scale_ != 1.0) {
     double inv_scale = 1 / scale_;
-    bounds.left = (cInt)round(bounds.left * inv_scale);
-    bounds.top = (cInt)round(bounds.top * inv_scale);
-    bounds.right = (cInt)round(bounds.right * inv_scale);
-    bounds.bottom = (cInt)round(bounds.bottom * inv_scale);
+    bounds.left = (cInt)std::round(bounds.left * inv_scale);
+    bounds.top = (cInt)std::round(bounds.top * inv_scale);
+    bounds.right = (cInt)std::round(bounds.right * inv_scale);
+    bounds.bottom = (cInt)std::round(bounds.bottom * inv_scale);
   }
 	return bounds;
 }
@@ -2081,7 +2085,7 @@ RectI Clipper::GetBounds() {
 // ClipperD methods ...
 //------------------------------------------------------------------------------
 
-ClipperD::ClipperD(double scale) : Clipper() { 
+ClipperD::ClipperD(double scale) : Clipper() {
   scale_ = (scale == 0 ? DefaultScale : scale);
 }
 //------------------------------------------------------------------------------
@@ -2118,7 +2122,7 @@ bool ClipperD::BuildResultD(PathsD &solution_closed, PathsD *solution_open) {
       //fixup for duplicate start and end points ...
       if (op->pt == outrec->pts->pt) cnt--;
 
-      bool is_open = (outrec->state == osOpen);
+      bool is_open = (outrec->state == OutRecState::Open);
       if (cnt < 2 || (!is_open && cnt == 2) || (is_open && !solution_open)) continue;
       PathD p;
       p.reserve(cnt);
@@ -2161,7 +2165,7 @@ bool ClipperD::BuildResultTreeD(PolyTreeD &pt, PathsD *solution_open) {
       //fixup for duplicate start and } points ...
       if (op->pt == outrec->pts->pt) cnt--;
 
-      bool is_open = (outrec->state == osOpen);
+      bool is_open = (outrec->state == OutRecState::Open);
       if (cnt < 2 || (!is_open && cnt == 2) || (is_open && !solution_open))
         continue;
 

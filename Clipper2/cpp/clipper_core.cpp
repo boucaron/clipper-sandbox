@@ -1,12 +1,13 @@
 /*******************************************************************************
 * Author    :  Angus Johnson                                                   *
 * Version   :  10.0 (beta)                                                     *
-* Date      :  24 March 2019                                                   *
+* Date      :  2 November 2020                                                 *
 * Website   :  http://www.angusj.com                                           *
-* Copyright :  Angus Johnson 2010-2019                                         *
-* Purpose   :  Core Clipper Library module                                     *
-*              Contains structures and functions used throughout the library   *
+* Copyright :  Angus Johnson 2010-2020                                         *
+* Purpose   :  Core Clipper Library structures and functions                   *
 * License   :  http://www.boost.org/LICENSE_1_0.txt                            *
+*                                                                              *
+* C++       :  Thanks to help from Andreas Lücke - ALuecke@gmx.net             *
 *******************************************************************************/
 
 #include "clipper_core.h"
@@ -32,57 +33,38 @@ template struct PathsArray<double>;
 // Point
 //------------------------------------------------------------------------------
 
-template<>
-void PointI::Rotate(const PointD &center, double angle_rad) {
-	double tmp_x = x - center.x;
-	double tmp_y = y - center.y;
-	double cos_a = cos(angle_rad);
-	double sin_a = sin(angle_rad);
+template<typename T>
+inline void Point<T>::Rotate(const PointD & center, double angle_rad){
+    double tmp_x = x - center.x;
+    double tmp_y = y - center.y;
+    double cos_a = cos(angle_rad);
+    double sin_a = sin(angle_rad);
 
-	x = (cInt)round(tmp_x * cos_a - tmp_y * sin_a + center.x);
-	y = (cInt)round(tmp_x * sin_a - tmp_y * cos_a + center.y);
+    if  (std::numeric_limits<T>::is_integer) {
+        x = static_cast<T>(std::round(tmp_x * cos_a - tmp_y * sin_a + center.x));
+        y = static_cast<T>(std::round(tmp_x * sin_a - tmp_y * cos_a + center.y));
+    }
+    else {
+        x = static_cast<T>(tmp_x * cos_a - tmp_y * sin_a + center.x);
+        y = static_cast<T>(tmp_x * sin_a - tmp_y * cos_a + center.y);
+    }
 }
-//------------------------------------------------------------------------------
-
-template<>
-void PointD::Rotate(const PointD &center, double angle_rad) {
-	double tmp_x = x - center.x;
-	double tmp_y = y - center.y;
-	double cos_a = cos(angle_rad);
-	double sin_a = sin(angle_rad);
-
-	x = tmp_x * cos_a - tmp_y * sin_a + center.x;
-	y = tmp_x * sin_a - tmp_y * cos_a + center.y;
-}
-//------------------------------------------------------------------------------
-
-template<>
-void PointI::Rotate(const PointD &center, double sin_a, double cos_a) {
-	double tmp_x = x - center.x;
-	double tmp_y = y - center.y;
-
-	x = (cInt)round(tmp_x * cos_a - tmp_y * sin_a + center.x);
-	y = (cInt)round(tmp_x * sin_a - tmp_y * cos_a + center.y);
-}
-//------------------------------------------------------------------------------
-
-template<>
-void PointD::Rotate(const PointD &center, double sin_a, double cos_a) {
-	double tmp_x = x - center.x;
-	double tmp_y = y - center.y;
-
-	x = tmp_x * cos_a - tmp_y * sin_a + center.x;
-	y = tmp_x * sin_a - tmp_y * cos_a + center.y;
-}
-//------------------------------------------------------------------------------
 
 template<typename T>
-inline void Point<T>::Rotate(const PointD & center, double angle_rad){}
-//------------------------------------------------------------------------------
+inline void Point<T>::Rotate(const PointD & center,
+		  double sin_a, double cos_a){
+    double tmp_x = x - center.x;
+    double tmp_y = y - center.y;
 
-template<typename T>
-void clipperlib::Point<T>::Rotate(const PointD & center, 
-  double sin_a, double cos_a){}
+    if  (std::numeric_limits<T>::is_integer) {
+        x = static_cast<T>(std::round(tmp_x * cos_a - tmp_y * sin_a + center.x));
+        y = static_cast<T>(std::round(tmp_x * sin_a - tmp_y * cos_a + center.y));
+    }
+    else {
+        x = static_cast<T>(tmp_x * cos_a - tmp_y * sin_a + center.x);
+        y = static_cast<T>(tmp_x * sin_a - tmp_y * cos_a + center.y);
+    }
+}
 
 //------------------------------------------------------------------------------
 // Rect
@@ -104,65 +86,41 @@ void Rect<T>::Intersect(const Rect<T> &rect) {
 	}
 }
 //------------------------------------------------------------------------------
-
-void RectI::Rotate(double angle_rad) {
-	PointD cp;
-	PathD pts;
-
-	cp.x = double(right + left) / 2;
-	cp.y = double(bottom + top) / 2;
-
-	pts.resize(4);
-	pts[0] = PointD((double)left, (double)top);
-	pts[1] = PointD((double)right, (double)top);
-	pts[2] = PointD((double)right, (double)bottom);
-	pts[3] = PointD((double)left, (double)bottom);
-	pts.Rotate(cp, angle_rad);
-
-	left = (cInt)floor(pts[0].x);
-	top = (cInt)floor(pts[0].y);
-	right = (cInt)ceil(pts[0].x);
-	bottom = (cInt)ceil(pts[0].y);
-
-	for (const auto &p : pts.data) {
-		if (p.x < left) left = (cInt)floor(p.x);
-		if (p.y < top) top = (cInt)floor(p.y);
-		if (p.x > right) right = (cInt)ceil(p.x);
-		if (p.y > bottom) bottom = (cInt)ceil(p.y);
-	}
-}
-//------------------------------------------------------------------------------
-
-void RectD::Rotate(double angle_rad) {
-	PointD cp;
-	PathD pts;
-
-	cp.x = double(right + left) / 2;
-	cp.y = double(bottom + top) / 2;
-
-	pts.resize(4);
-	pts[0] = PointD(left, top);
-	pts[1] = PointD(right, top);
-	pts[2] = PointD(right, bottom);
-	pts[3] = PointD(left, bottom);
-
-	pts.Rotate(cp, angle_rad);
-	left = pts[0].x;
-	top = pts[0].y;
-	right = pts[0].x;
-	bottom = pts[0].y;
-
-	for (const auto &point : pts.data) {
-		if (point.x < left) left = point.x;
-		if (point.y < top) top = point.y;
-		if (point.x > right) right = point.x;
-		if (point.y > bottom) bottom = point.y;
-	}
-}
-//------------------------------------------------------------------------------
-
 template<typename T>
-inline void Rect<T>::Rotate(double angle_rad) {}
+inline void Rect<T>::Rotate(double angle_rad) {
+	using UsedT = typename std::conditional<std::numeric_limits<T>::is_integer, double, T>::type;
+	Point<UsedT> cp;
+	cp.x = static_cast<UsedT>((right + left) / 2);
+	cp.y = static_cast<UsedT>((bottom + top) / 2);
+
+	Path<UsedT> pts;
+	pts.resize(4);
+	pts[0] = Point<UsedT>(static_cast<UsedT>(left), static_cast<UsedT>(top));
+	pts[1] = Point<UsedT>(static_cast<UsedT>(right), static_cast<UsedT>(top));
+	pts[2] = Point<UsedT>(static_cast<UsedT>(right), static_cast<UsedT>(bottom));
+	pts[3] = Point<UsedT>(static_cast<UsedT>(left), static_cast<UsedT>(bottom));
+
+	pts.Rotate(cp, angle_rad);
+
+	const auto resultx = std::minmax_element(begin(pts.data), end(pts.data),[](Point<UsedT> p1, Point<UsedT> p2) {return p1.x< p2.x;});
+	const auto resulty = std::minmax_element(begin(pts.data), end(pts.data),[](Point<UsedT> p1, Point<UsedT> p2) {return p1.y< p2.y;});
+
+	if  (std::numeric_limits<T>::is_integer) {
+		left = static_cast<T>(std::floor(resultx.first->x));
+		right = static_cast<T>(std::ceil(resultx.second->x));
+		top = static_cast<T>(std::floor(resulty.first->y));
+		bottom = static_cast<T>(std::ceil(resulty.second->y));
+	}
+	else
+	{
+		left = static_cast<T>(resultx.first->x);
+		right = static_cast<T>(resultx.second->x);
+		top = static_cast<T>(resulty.first->y);
+		bottom = static_cast<T>(resulty.second->y);
+	}
+}
+
+
 //------------------------------------------------------------------------------
 
 template <typename T>
@@ -183,136 +141,13 @@ void Rect<T>::Union(const Rect<T> &rect) {
 // Path
 //------------------------------------------------------------------------------
 
-template <>
-PathI::Path(const PathI &other, double scale) {
-	if (scale == 0) scale = 1;
-	if (scale == 1) {
-		Append(other);
-	} else {
-		data.reserve(other.size());
-		for (const auto &p : other.data)
-			data.push_back(PointI((cInt)round(p.x * scale), (cInt)round(p.y * scale)));
-	}
-}
-//------------------------------------------------------------------------------
-
-template <>
-PathI::Path(const PathD &other, double scale) {
-	if (scale == 0) scale = 1;
-	data.reserve(other.size());
-	for (const auto &p : other.data)
-		data.push_back(PointI((cInt)round(p.x * scale), (cInt)round(p.y * scale)));
-}
-//------------------------------------------------------------------------------
-
-template <>
-PathD::Path(const PathI &other, double scale) {
-	if (scale == 0) scale = 1;
-	data.reserve(other.size());
-	for (const auto &p : other.data)
-		data.push_back(PointD(p.x * scale, p.y * scale));
-}
-//------------------------------------------------------------------------------
-
-template <>
-PathD::Path(const PathD &other, double scale) {
-	if (scale == 0) scale = 1;
-	if (scale == 1) {
-		Append(other);
-	} else {
-		data.reserve(other.size());
-		for (const auto &p : other.data)
-			data.push_back(PointD(p.x * scale, p.y * scale));
-	}
-}
-//------------------------------------------------------------------------------
-
-template<typename T>
-clipperlib::Path<T>::Path(const PathI & other, double scale){}
-//------------------------------------------------------------------------------
-
-template<typename T>
-clipperlib::Path<T>::Path(const PathD & other, double scale){}
-//------------------------------------------------------------------------------
-
-template <typename T>
-void Path<T>::Append(const Path<T> &extra) {
-  if (extra.size() > 0)
-    data.insert(end(data), begin(extra.data), end(extra.data));
-}
-//------------------------------------------------------------------------------
-
-template <>
-void PathI::Assign(const PathI &other, double scale) {
-  if (&other == this)
-    throw ClipperLibException("Can't assign self to self in Path<T>::Assign.");
-  data.clear();
-	if (scale == 0.0 || scale == 1.0) {
-    Append(other);
-  } else {
-		data.reserve(other.size());
-		for (const auto &p : other.data)
-			data.push_back(PointI((cInt)round(p.x * scale), (cInt)round(p.y * scale)));
-	}
-}
-//------------------------------------------------------------------------------
-
-template <>
-void PathD::Assign(const PathI &other, double scale) {
-	data.clear();
-	if (scale == 0.0 || scale == 1.0) {
-    Append(other);
-  } else {
-		data.reserve(other.size());
-		for (const auto &p : other.data)
-			data.push_back(PointD((double)p.x * scale, (double)p.y * scale));
-	}
-}
-//------------------------------------------------------------------------------
-
-template <>
-void PathI::Assign(const PathD &other, double scale) {
-	data.clear();
-	if (scale == 0.0 || scale == 1.0) {
-    Append(other);
-  } else {
-		data.reserve(other.size());
-		for (const auto &p : other.data)
-			data.push_back(PointI((cInt)round(p.x * scale), (cInt)round(p.y * scale)));
-	}
-}
-//------------------------------------------------------------------------------
-
-template <>
-void PathD::Assign(const PathD &other, double scale) {
-  if (&other == this)
-    throw ClipperLibException("Can't assign self to self in Path<T>::Assign.");
-  data.clear();
-	if (scale == 0.0 || scale == 1.0) {
-    Append(other);
-  } else {
-		data.reserve(other.size());
-		for (const auto &p : other.data)
-			data.push_back(PointD(p.x * scale, p.y * scale));
-	}
-}
-//------------------------------------------------------------------------------
-
-template<typename T>
-void clipperlib::Path<T>::Assign(const PathI & other, double scale){}
-//------------------------------------------------------------------------------
-
-template<typename T>
-void clipperlib::Path<T>::Assign(const PathD & other, double scale){}
-//------------------------------------------------------------------------------
-
 template <typename T>
 double Path<T>::Area() const {
 	double area = 0.0;
 	auto len = data.size() - 1;
-	if (len < 3) return area;
-	auto j = len - 1;
-	for (decltype(len) i = 0; i < len; ++i) {
+	if (len < 2) return area;
+	auto j = len;
+	for (decltype(len) i = 0; i <= len; ++i) {
 		double d = (double)(data[j].x + data[i].x);
 		area += d * (data[j].y - data[i].y);
 		j = i;
@@ -375,14 +210,24 @@ void Path<T>::Rotate(const PointD &center, double angle_rad) {
 //------------------------------------------------------------------------------
 
 template <typename T>
-void Path<T>::Scale(T sx, T sy) {
+void Path<T>::Scale(double sx, double sy) {
 	if (sx == 0) sx = 1;
 	if (sy == 0) sy = 1;
 	if (sx == 1 && sy == 1) return;
 
-	for (auto &point : data) {
-		point.x *= sx;
-		point.y *= sy;
+	if  (std::numeric_limits<T>::is_integer)
+	{
+		for (auto& point : data) {
+			point.x = static_cast<T>(std::round(point.x * sx));
+			point.y = static_cast<T>(std::round(point.y * sy));
+		}
+	}
+	else
+	{
+		for (auto& point : data) {
+			point.x = static_cast<T>(point.x * sx);
+			point.y = static_cast<T>(point.y * sy);
+		}
 	}
 	StripDuplicates();
 }
@@ -393,8 +238,63 @@ void Path<T>::StripDuplicates() {
 	data.erase(unique(begin(data), end(data)), end(data));
 }
 
+template <typename T>
+void Path<T>::Trim(double toleranceSqr) {
+	for (auto it = data.begin() + 1; it != data.end(); ) {
+		if (DistanceSqr(*(it - 1), *it) < toleranceSqr) it = data.erase(it);
+		else ++it;
+	}
+}
+
 //------------------------------------------------------------------------------
 // Paths
+//------------------------------------------------------------------------------
+
+template<>
+void PathsI::Assign(const PathsI &other, double scale) {
+	using namespace std;
+	data.clear();
+	data.resize(other.data.size());
+	typename vector<PathI>::iterator it1;
+	typename vector<PathI>::const_iterator it2;
+	for (it1 = data.begin(), it2 = other.data.begin(); it1 != data.end(); it1++, it2++)
+		it1->Assign(*it2, scale);
+}
+//------------------------------------------------------------------------------
+
+template<>
+void PathsD::Assign(const PathsI &other, double scale) {
+	using namespace std;
+	data.clear();
+	data.resize(other.data.size());
+	typename vector<PathD>::iterator it1;
+	typename vector<PathI>::const_iterator it2;
+	for (it1 = data.begin(), it2 = other.data.begin(); it1 != data.end(); it1++, it2++)
+		it1->Assign(*it2, scale);
+}
+//------------------------------------------------------------------------------
+template<>
+void PathsI::Assign(const PathsD &other, double scale) {
+	using namespace std;
+	data.clear();
+	data.resize(other.data.size());
+	typename vector<PathI>::iterator it1;
+	typename vector<PathD>::const_iterator it2;
+	for (it1 = data.begin(), it2 = other.data.begin(); it1 != data.end(); it1++, it2++)
+		it1->Assign(*it2, scale);
+}
+//------------------------------------------------------------------------------
+
+template <>
+void PathsD::Assign(const PathsD &other, double scale) {
+	using namespace std;
+	data.clear();
+	data.resize(other.data.size());
+	typename vector<PathD>::iterator it1;
+	typename vector<PathD>::const_iterator it2;
+	for (it1 = data.begin(), it2 = other.data.begin(); it1 != data.end(); it1++, it2++)
+		it1->Assign(*it2, scale);
+}
 //------------------------------------------------------------------------------
 
 template <>
@@ -433,54 +333,6 @@ template <typename T>
 void Paths<T>::Append(const Paths<T> &extra) {
   if (extra.size() > 0)
     data.insert(end(data), begin(extra.data), end(extra.data));
-}
-//------------------------------------------------------------------------------
-
-template <>
-void PathsI::Assign(const PathsI &other, double scale) {
-	using namespace std;
-	data.clear();
-	data.resize(other.data.size());
-	typename vector<PathI>::iterator it1;
-	typename vector<PathI>::const_iterator it2;
-	for (it1 = data.begin(), it2 = other.data.begin(); it1 != data.end(); it1++, it2++)
-		it1->Assign(*it2, scale);
-}
-//------------------------------------------------------------------------------
-
-template <>
-void PathsD::Assign(const PathsI &other, double scale) {
-	using namespace std;
-	data.clear();
-	data.resize(other.data.size());
-	typename vector<PathD>::iterator it1;
-	typename vector<PathI>::const_iterator it2;
-	for (it1 = data.begin(), it2 = other.data.begin(); it1 != data.end(); it1++, it2++)
-		it1->Assign(*it2, scale);
-}
-//------------------------------------------------------------------------------
-
-template <>
-void PathsI::Assign(const PathsD &other, double scale) {
-	using namespace std;
-	data.clear();
-	data.resize(other.data.size());
-	typename vector<PathI>::iterator it1;
-	typename vector<PathD>::const_iterator it2;
-	for (it1 = data.begin(), it2 = other.data.begin(); it1 != data.end(); it1++, it2++)
-		it1->Assign(*it2, scale);
-}
-//------------------------------------------------------------------------------
-
-template <>
-void PathsD::Assign(const PathsD &other, double scale) {
-	using namespace std;
-	data.clear();
-	data.resize(other.data.size());
-	typename vector<PathD>::iterator it1;
-	typename vector<PathD>::const_iterator it2;
-	for (it1 = data.begin(), it2 = other.data.begin(); it1 != data.end(); it1++, it2++)
-		it1->Assign(*it2, scale);
 }
 //------------------------------------------------------------------------------
 
@@ -527,7 +379,7 @@ void Paths<T>::Rotate(const PointD &center, double angle_rad) {
 //------------------------------------------------------------------------------
 
 template <typename T>
-void Paths<T>::Scale(T scale_x, T scale_y) {
+void Paths<T>::Scale(double scale_x, double scale_y) {
 	for (auto &path : data)
 		path.Scale(scale_x, scale_y);
 }
@@ -548,6 +400,13 @@ template <typename T>
 void Paths<T>::Reverse() {
 	for (auto &path : data)
 		path.Reverse();
+}
+//------------------------------------------------------------------------------
+
+template <typename T>
+void Paths<T>::Trim(double toleranceSqr) {
+	for (auto& path : data)
+		path.Trim(toleranceSqr);
 }
 
 //------------------------------------------------------------------------------
@@ -582,15 +441,21 @@ Rect<T> PathsArray<T>::Bounds() const {
 // Miscellaneous
 //------------------------------------------------------------------------------
 
+template <typename T>
+double DistanceSqr(const Point<T> pt1, const Point<T> pt2) {
+	return std::pow(pt1.x - pt2.x, 2.0) + std::pow(pt1.y - pt2.y, 2.0);
+}
+//------------------------------------------------------------------------------
+
 PipResult PointInPolygon(const PointI &pt, const PathI &path) {
 	int val = 0;
 	auto cnt = path.size();
 	double d, d2, d3;  // using doubles to avoid possible integer overflow
 	PointI ip, ip_next;
-	PipResult result = pipOnEdge;
+	PipResult result = PipResult::OnEdge;
 
 	if (cnt < 3) {
-		result = pipOutside;
+		result = PipResult::Outside;
 		return result;
 	}
 	ip = path[0];
@@ -633,9 +498,9 @@ PipResult PointInPolygon(const PointI &pt, const PathI &path) {
 		ip = ip_next;
 	}
 	switch (val) {
-		case -1: result = pipOnEdge; break;
-		case 1: result = pipInside; break;
-		default: result = pipOutside; break;
+	case -1: result = PipResult::OnEdge; break;
+		case 1: result = PipResult::Inside; break;
+		default: result = PipResult::Outside; break;
 	}
 	return result;
 }

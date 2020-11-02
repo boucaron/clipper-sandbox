@@ -97,7 +97,8 @@ type
   EClipperLibException = class(Exception);
 
 //Area: returns type double to avoid potential integer overflows
-function Area(const path: TPath): Double;
+function Area(const path: TPath): Double; overload;
+function Area(const path: TPathD): Double; overload;
 function Orientation(const path: TPath): Boolean;
 function PointInPolygon(const pt: TPoint64;
   const path: TPath): TPointInPolygonResult;
@@ -141,14 +142,22 @@ function OffsetPath(const path: TPathD; dx, dy: double): TPathD; overload;
 function OffsetPaths(const paths: TPaths; dx, dy: Int64): TPaths; overload;
 function OffsetPaths(const paths: TPathsD; dx, dy: double): TPathsD; overload;
 
-function Paths(const paths: TPathsD): TPaths;
+function Paths(const pathsD: TPathsD): TPaths;
 function PathsD(const paths: TPaths): TPathsD;
+
+procedure StripDuplicates(var path: TPath); overload;
+procedure StripDuplicates(var path: TPathD); overload;
 
 function ReversePath(const path: TPath): TPath; overload;
 function ReversePath(const path: TPathD): TPathD; overload;
 function ReversePaths(const paths: TPaths): TPaths; overload;
 function ReversePaths(const paths: TPathsD): TPathsD; overload;
 
+procedure AppendPoint(var path: TPath; const pt: TPoint64); overload;
+procedure AppendPoint(var path: TPathD; const pt: TPointD); overload;
+
+procedure AppendPath(var paths: TPaths; const extra: TPath); overload;
+procedure AppendPath(var paths: TPathsD; const extra: TPathD); overload;
 procedure AppendPaths(var paths: TPaths; const extra: TPaths); overload;
 procedure AppendPaths(var paths: TPathsD; const extra: TPathsD); overload;
 
@@ -162,8 +171,12 @@ function PathsToString(const paths: TPathsD): string; overload;
 procedure StringToFile(const str, filename: string);
 
 const
-  nullRect64: TRect64 = (left:0; top: 0; right:0; Bottom: 0);
-  nullRectD: TRectD = (left:0.0; top: 0.0; right:0.0; Bottom: 0.0);
+  MinInt64 = -9223372036854775807;
+  MaxInt64 = 9223372036854775807;
+  NullRect64: TRect64 =
+    (left: MaxInt64; top: MaxInt64; right: MinInt64; Bottom: MinInt64);
+  NullRectD: TRectD =
+    (left: MaxDouble; top: MaxDouble; right: -MaxDouble; Bottom: -MaxDouble);
 
 implementation
 
@@ -432,20 +445,20 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function Paths(const paths: TPathsD): TPaths;
+function Paths(const pathsD: TPathsD): TPaths;
 var
   i,j,len,len2: integer;
 begin
-  len := Length(paths);
+  len := Length(pathsD);
   setLength(Result, len);
   for i := 0 to len -1 do
   begin
-    len2 := Length(paths[i]);
+    len2 := Length(pathsD[i]);
     setLength(Result[i], len2);
     for j := 0 to len2 -1 do
     begin
-      Result[i][j].X := Round(paths[i][j].X);
-      Result[i][j].Y := Round(paths[i][j].Y);
+      Result[i][j].X := Round(pathsD[i][j].X);
+      Result[i][j].Y := Round(pathsD[i][j].Y);
     end;
   end;
 end;
@@ -521,6 +534,46 @@ begin
     for j := 0 to highJ do
       Result[i][j] := paths[i][highJ - j];
   end;
+end;
+//------------------------------------------------------------------------------
+
+procedure AppendPoint(var path: TPath; const pt: TPoint64);
+var
+  len: Integer;
+begin
+  len := length(path);
+  SetLength(path, len +1);
+  path[len] := pt;
+end;
+//------------------------------------------------------------------------------
+
+procedure AppendPoint(var path: TPathD; const pt: TPointD);
+var
+  len: Integer;
+begin
+  len := length(path);
+  SetLength(path, len +1);
+  path[len] := pt;
+end;
+//------------------------------------------------------------------------------
+
+procedure AppendPath(var paths: TPaths; const extra: TPath);
+var
+  len: Integer;
+begin
+  len := length(paths);
+  SetLength(paths, len +1);
+  paths[len] := extra;
+end;
+//------------------------------------------------------------------------------
+
+procedure AppendPath(var paths: TPathsD; const extra: TPathD);
+var
+  len: Integer;
+begin
+  len := length(paths);
+  SetLength(paths, len +1);
+  paths[len] := extra;
 end;
 //------------------------------------------------------------------------------
 
@@ -812,6 +865,25 @@ end;
 //------------------------------------------------------------------------------
 
 function Area(const path: TPath): Double;
+var
+  i, j, highI: Integer;
+  d: Double;
+begin
+  Result := 0.0;
+  highI := High(path);
+  if (highI < 2) then Exit;
+  j := highI;
+  for i := 0 to highI do
+  begin
+    d := (path[j].X + path[i].X);
+    Result := Result + d * (path[j].Y - path[i].Y);
+    j := i;
+  end;
+  Result := -Result * 0.5;
+end;
+//------------------------------------------------------------------------------
+
+function Area(const path: TPathD): Double;
 var
   i, j, highI: Integer;
   d: Double;
