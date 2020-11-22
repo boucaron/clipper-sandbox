@@ -197,7 +197,7 @@ protected:
 	bool BuildResultTreeD(PolyTreeD &polytree, PathsD *open_paths);
 
 public:
-	ClipperD(double scale = 0);
+	ClipperD(double scale = 100);
 	//ADDPATH & ADDPATHS METHODS ...
 	virtual void AddPath(const PathD &path,
     PathType polytype = PathType::Subject, bool is_open = false);
@@ -230,16 +230,46 @@ protected:
 	std::vector<PolyTree *> childs_;
 
 public:
-	PolyTree(double scale = 1.0);  //only for root node
-	PolyTree(PolyTree<T> &parent, const clipperlib::Path<T> &path);
+	PolyTree(double scale = 1.0) {  //only for root node
+		scale_ = scale;
+		parent_ = nullptr;
+	}
+	PolyTree(PolyTree<T>& parent, const clipperlib::Path<T>& path) {
+		this->parent_ = &parent;
+		this->scale_ = parent.scale_;
+		this->path_.Append(path);
+		parent.childs_.push_back(this);
+	}
 	virtual ~PolyTree() { Clear(); };
-	void Clear();
+	void Clear() {
+		for (auto child : childs_) {
+			child->Clear();
+			delete child;
+		}
+		childs_.resize(0);
+	}
 	size_t ChildCount() const { return childs_.size(); }
-	PolyTree<T> &Child(unsigned index);
+	PolyTree<T>& Child(unsigned index) {
+		if (index < 0 || index >= childs_.size())
+			throw ClipperLibException("invalid range in PolyTree::GetChild.");
+		return *childs_[index];
+	}
 	const PolyTree<T> *Parent() const { return parent_; };
 	const Path<T> &GetPath() const { return path_; };
-	bool IsHole() const;
-	void SetScale(double scale);
+	bool IsHole() const {
+		PolyTree* pp = parent_;
+		bool is_hole = pp;
+		while (pp) {
+			is_hole = !is_hole;
+			pp = pp->parent_;
+		}
+		return is_hole;
+	}
+	void SetScale(double scale) {
+		scale_ = scale;
+		for (auto child : childs_)
+			child->SetScale(scale);
+	}
 };
 
 //------------------------------------------------------------------------------

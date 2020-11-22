@@ -1,7 +1,7 @@
 /*******************************************************************************
 * Author    :  Angus Johnson                                                   *
 * Version   :  10.0 (beta)                                                     *
-* Date      :  2 November 2020                                                 *
+* Date      :  21 November 2020                                                *
 * Website   :  http://www.angusj.com                                           *
 * Copyright :  Angus Johnson 2010-2020                                         *
 * Purpose   :  Polygon 'clipping' (boolean operations on polygons)             *
@@ -659,7 +659,7 @@ void Clipper::AddPathToVertexList(const PathI &path, PathType polytype, bool is_
     while (path_len > 1 && (path[size_t(path_len - 1)] == path[0])) --path_len;
 	if (path_len < 2) return;
 
-	int i = 1;
+	size_t i = 1;
 	bool p0_is_minima = false, p0_is_maxima = false, going_up;
 	//find the first non-horizontal segment in the path ...
 	while ((i < path_len) && (path[i].y == path[0].y)) ++i;
@@ -696,7 +696,7 @@ void Clipper::AddPathToVertexList(const PathI &path, PathType polytype, bool is_
 
 	//nb: polygon orientation is determined later (see InsertLocalMinimaIntoAEL).
 	i = 0;
-	for (int j = 1; j < path_len; ++j) {
+	for (size_t j = 1; j < path_len; ++j) {
 		if (path[j] == vertices[i].pt) continue;  //ie skips duplicates
 		vertices[j].pt = path[j];
 
@@ -2240,72 +2240,5 @@ bool ClipperD::Execute(ClipType clipType, FillRule ft, PolyTreeD &solution_close
   CleanUp();
   return executed;
 }
-
-//------------------------------------------------------------------------------
-// PolyTree methods ...
-//------------------------------------------------------------------------------
-
-template <typename T>
-PolyTree<T>::PolyTree(double scale) {
-  scale_ = scale;
-  parent_ = nullptr;
-}
-//------------------------------------------------------------------------------
-
-template <typename T>
-PolyTree<T>::PolyTree(PolyTree<T> &parent,
-  const clipperlib::Path<T> &path) {
-  this->parent_ = &parent;
-  this->scale_ = parent.scale_;
-  this->path_.Append(path);
-  parent.childs_.push_back(this);
-}
-//------------------------------------------------------------------------------
-
-template <typename T>
-void PolyTree<T>::Clear() {
-  for (auto  child : childs_) {
-    child->Clear();
-    delete child;
-  }
-  childs_.resize(0);
-}
-//------------------------------------------------------------------------------
-
-template <>
-PolyTreeI &PolyTreeI::Child(unsigned index) {
-  if (index < 0 || index >= childs_.size())
-    throw ClipperLibException("invalid range in PolyTree::GetChild.");
-  return *childs_[index];
-}
-//------------------------------------------------------------------------------
-
-template <>
-PolyTreeD &PolyTreeD::Child(unsigned index) {
-  if (index < 0 || index >= childs_.size())
-    throw ClipperLibException("invalid range in PolyTree::GetChild.");
-  return *childs_[index];
-}
-//------------------------------------------------------------------------------
-
-template <typename T>
-bool PolyTree<T>::IsHole() const {
-  PolyTree *pp = parent_;
-  bool is_hole = pp;
-  while (pp) {
-    is_hole = !is_hole;
-    pp = pp->parent_;
-  }
-  return is_hole;
-}
-//------------------------------------------------------------------------------
-
-template <typename T>
-void PolyTree<T>::SetScale(double scale) {
-  scale_ = scale;
-  for (auto child : childs_)
-    child->SetScale(scale);
-}
-//------------------------------------------------------------------------------
 
 }  // namespace clipperlib

@@ -1,7 +1,7 @@
 /*******************************************************************************
 * Author    :  Angus Johnson                                                   *
 * Version   :  10.0 (beta)                                                     *
-* Date      :  2 November 2020                                                 *
+* Date      :  21 November 2020                                                *
 * Website   :  http://www.angusj.com                                           *
 * Copyright :  Angus Johnson 2010-2020                                         *
 * Purpose   :  Core Clipper Library structures and functions                   *
@@ -239,11 +239,14 @@ void Path<T>::StripDuplicates() {
 }
 
 template <typename T>
-void Path<T>::Trim(double toleranceSqr) {
-	for (auto it = data.begin() + 1; it != data.end(); ) {
-		if (DistanceSqr(*(it - 1), *it) < toleranceSqr) it = data.erase(it);
-		else ++it;
-	}
+void Path<T>::Trim(T min_length) {
+	if (data.size() < 2) return;
+	min_length = min_length * min_length;
+	for (auto it = data.begin() + 1; it != data.end(); ) 
+		if (NearEqual(*(it - 1), *it, min_length))
+			it = data.erase(it);
+		else 
+			++it;
 }
 
 //------------------------------------------------------------------------------
@@ -404,9 +407,9 @@ void Paths<T>::Reverse() {
 //------------------------------------------------------------------------------
 
 template <typename T>
-void Paths<T>::Trim(double toleranceSqr) {
+void Paths<T>::Trim(T min_length) {
 	for (auto& path : data)
-		path.Trim(toleranceSqr);
+		path.Trim(min_length);
 }
 
 //------------------------------------------------------------------------------
