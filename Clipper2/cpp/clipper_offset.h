@@ -1,7 +1,7 @@
 /*******************************************************************************
 * Author    :  Angus Johnson                                                   *
 * Version   :  10.0 (beta)                                                     *
-* Date      :  2 November 2020                                                 *
+* Date      :  21 November 2020                                                *
 * Website   :  http://www.angusj.com                                           *
 * Copyright :  Angus Johnson 2010-2020                                         *
 * Purpose   :  Polygon offsetting                                              *
@@ -13,13 +13,20 @@
 #ifndef CLIPPER_OFFSET_H_
 #define CLIPPER_OFFSET_H_
 
+#include "clipper.h"
 #include "clipper_core.h"
 #include <list>
 
 namespace clipperlib {
 
 enum class JoinType { Square, Round, Miter };
-enum class EndType {Polygon, OpenJoined, OpenButt, OpenSquare, OpenRound};
+
+enum class EndType {Polygon, Joined, Butt, Square, Round};
+//Butt   : offsets both sides of a path, with square blunt ends
+//Square : offsets both sides of a path, with square extended ends
+//Round  : offsets both sides of a path, with round extended ends
+//Joined : offsets both sides of a path, with joined ends
+//Polygon: offsets only one side of a closed path
 
 class PathGroup {
 public:
@@ -44,37 +51,53 @@ private:
 	PathD path_out;
 	PathsD paths_out;
 	PathsD solution;
-	JoinType join_type;
-	double arc_tolerance;
-
+	JoinType join_type = JoinType::Square;
+	double arc_tolerance = 0.0;
+	double min_edge_len_sqrd = 0.0;
+	double min_edge_len = 0.5;
 	double scale_ = 1.0;
-	inline void addPoint(double x, double y) { path_out.push_back(PointD(x, y)); };
-	inline void addPoint(PointD pt) { path_out.push_back(pt); };
-	void doSquare(size_t j, size_t k);
-	void doMiter(size_t j, size_t k, double cosAplus1);
-	void doRound(size_t j, size_t k, double angle);
-	void buildNormals();
-	void offsetPolygon();
-	void offsetOpenJoined();
-	void offsetOpenPath(EndType et);
-	void offsetPoint(size_t j, size_t &k);
-	void doOffset(PathGroup &pathGroup, double delta_);
+	bool merge_groups = false;
+	inline void AddPoint(double x, double y) { path_out.push_back(PointD(x, y)); };
+	inline void AddPoint(PointD pt) { path_out.push_back(pt); };
+	void DoSquare(size_t j, size_t k);
+	void DoMiter(size_t j, size_t k, double cosAplus1);
+	void DoRound(size_t j, size_t k, double angle);
+	void BuildNormals();
+	void OffsetPolygon();
+	void OffsetOpenJoined();
+	void OffsetOpenPath(EndType et);
+	void OffsetPoint(size_t j, size_t &k);
+	void DoOffset(PathGroup &pathGroup, double delta_);
 public:
-	ClipperOffset(double miter_limit_ = 2.0, double arc_tolerance_ = 0.0);
-	~ClipperOffset();
+	ClipperOffset(double miter_limit_ = 2.0, double arc_tolerance_ = 0.0) :
+		miter_limit(miter_limit_), arc_tolerance(arc_tolerance_) {};
+	~ClipperOffset() { Clear(); };
 
-	void addPath(const PathD &p, JoinType jt_, EndType et_);
-	void addPaths(const PathsD &p, JoinType jt_, EndType et_);
-	void clear();
-	PathsD execute(double delta_);
+	void AddPath(const PathD &p, JoinType jt_, EndType et_);
+	void AddPaths(const PathsD &p, JoinType jt_, EndType et_);
+	void Clear();
+	PathsD Execute(double delta_);
+
+	//ArcTolerance: needed for rounded offsets (See offset_triginometry2.svg)
+	void ArcTolerance(double arc_tolerance_) { arc_tolerance = arc_tolerance_; }
+	//MergeGroups: A path group is one or more paths added via the AddPath or
+	//AddPaths methods. By default these path groups will be offset
+	//independently of other groups and this may cause overlaps (intersections).
+	//However, when MergeGroups is enabled, any overlapping offsets will be
+	//merged (via a clipping union operation) to remove overlaps.
+	void MergeGroups(bool merge_groups_) { merge_groups = merge_groups_; }
+	//MinEdgeLength: Very small edges are often at unexpected angles and these
+	//can become visible artefacts with offsetting. 
+	//Consequently it's best to remove these tiny edges before processing.
+	void MinEdgeLength(double min_edge_len_) { min_edge_len = min_edge_len_; }
 };
 
-PathsI clipperOffsetPaths(const PathsI paths, double delta, JoinType jt, EndType et);
-PathsD clipperOffsetPaths(const PathsD paths, double delta, JoinType jt, EndType et);
+PathsI InflatePaths(const PathsI paths, double delta, JoinType jt, EndType et);
+PathsD InflatePaths(const PathsD paths, double delta, JoinType jt, EndType et);
 
 const double tolerance = 1E-15;
-const double default_arc_frac = 0.05;
-const double two_pi = 2.0 * 3.141592653589793238;
-const double quarter_pi = 0.25 * 3.141592653589793238;
+const double default_arc_frac = 0.025;
+const double two_pi = 2.0 * PI;
+const double quarter_pi = 0.25 * PI;
 }
 #endif /* CLIPPER_OFFSET_H_ */

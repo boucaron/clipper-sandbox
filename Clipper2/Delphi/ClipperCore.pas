@@ -3,33 +3,15 @@ unit ClipperCore;
 (*******************************************************************************
 * Author    :  Angus Johnson                                                   *
 * Version   :  10.0 (beta)                                                     *
-* Date      :  9 March 2019                                                    *
+* Date      :  6 November 2020                                                 *
 * Website   :  http://www.angusj.com                                           *
-* Copyright :  Angus Johnson 2010-2019                                         *
+* Copyright :  Angus Johnson 2010-2020                                         *
 * Purpose   :  Core Clipper Library module                                     *
 *              Contains structures and functions used throughout the library   *
 * License   :  http://www.boost.org/LICENSE_1_0.txt                            *
 *******************************************************************************)
 
-{$IFDEF FPC}
-  {$DEFINE INLINING}
-{$ELSE}
-  {$IF CompilerVersion < 14}
-    Requires Delphi version 6 or above.
-  {$IFEND}
-  {$IF CompilerVersion >= 18}         //Delphi 2007
-    //While Inlining has been supported since D2005, both D2005 and D2006
-    //have an Inline codegen bug (QC41166) so ignore Inline until D2007.
-    {$DEFINE INLINING}
-    {$IF CompilerVersion >= 25.0}     //Delphi XE4+
-      {$LEGACYIFEND ON}
-    {$IFEND}
-  {$IFEND}
-{$ENDIF}
-
-{$IFDEF DEBUG}
-  {$UNDEF INLINING}
-{$ENDIF}
+{$I Clipper.inc}
 
 interface
 
@@ -55,7 +37,7 @@ type
   TPathsD = array of TPathD;
   TArrayOfPathsD = array of TPathsD;
 
-  TRect64 = {$IFDEF UNICODE}record{$ELSE}object{$ENDIF}
+  TRect64 = {$IFDEF RECORD_METHODS}record{$ELSE}object{$ENDIF}
   private
     function GetWidth: Int64; {$IFDEF INLINING} inline; {$ENDIF}
     function GetHeight: Int64; {$IFDEF INLINING} inline; {$ENDIF}
@@ -70,7 +52,7 @@ type
     property IsEmpty: Boolean read GetIsEmpty;
   end;
 
-  TRectD = {$ifdef UNICODE}record{$else}object{$endif}
+  TRectD = {$ifdef RECORD_METHODS}record{$else}object{$endif}
   private
     function GetWidth: double; {$IFDEF INLINING} inline; {$ENDIF}
     function GetHeight: double; {$IFDEF INLINING} inline; {$ENDIF}
@@ -107,6 +89,9 @@ function CrossProduct(const pt1, pt2, pt3: TPoint64): double;
 function PointsEqual(const p1, p2: TPoint64): Boolean; overload;
 function PointsEqual(const p1, p2: TPointD): Boolean; overload;
   {$IFDEF INLINING} inline; {$ENDIF}
+function PointsNearEqual(const pt1, pt2: TPointD; distSqrd: double): Boolean;
+  {$IFDEF INLINING} inline; {$ENDIF}
+
 function Point64(const X, Y: Int64): TPoint64; overload;
   {$IFDEF INLINING} inline; {$ENDIF}
 function Point64(const X, Y: Double): TPoint64; overload;
@@ -145,8 +130,9 @@ function OffsetPaths(const paths: TPathsD; dx, dy: double): TPathsD; overload;
 function Paths(const pathsD: TPathsD): TPaths;
 function PathsD(const paths: TPaths): TPathsD;
 
-procedure StripDuplicates(var path: TPath); overload;
-procedure StripDuplicates(var path: TPathD); overload;
+function StripDuplicates(const path: TPath): TPath; overload;
+function StripDuplicates(const path: TPathD;
+  minLength: double = 0.25): TPathD; overload;
 
 function ReversePath(const path: TPath): TPath; overload;
 function ReversePath(const path: TPathD): TPathD; overload;
@@ -232,39 +218,42 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-procedure StripDuplicates(var path: TPath); overload;
+function StripDuplicates(const path: TPath): TPath; overload;
 var
-  i, len: integer;
+  i,j, len: integer;
 begin
   len := length(path);
-  i := 1;
-  while i < len do
-    if PointsEqual(path[i], path[i-1]) then
+  SetLength(Result, len);
+  if len = 0 then Exit;
+  Result[0] := path[0];
+  j := 0;
+  for i := 1 to len -1 do
+    if not PointsEqual(Result[j], path[i]) then
     begin
-      dec(len);
-      if (i < len) then
-        Move(path[i+1], path[i], (len-i)*SizeOf(TPoint64));
-      SetLength(path, len);
-    end else
-      inc(i);
+      inc(j);
+      Result[j] := path[i];
+    end;
+  SetLength(Result, j +1);
 end;
 //------------------------------------------------------------------------------
 
-procedure StripDuplicates(var path: TPathD); overload;
+function StripDuplicates(const path: TPathD; minLength: double): TPathD; overload;
 var
-  i, len: integer;
+  i,j, len: integer;
 begin
   len := length(path);
-  i := 1;
-  while i < len do
-    if PointsEqual(path[i], path[i-1]) then
+  SetLength(Result, len);
+  if len = 0 then Exit;
+  Result[0] := path[0];
+  j := 0;
+  minLength := minLength * minLength;
+  for i := 1 to len -1 do
+    if not PointsNearEqual(Result[j], path[i], minLength) then
     begin
-      dec(len);
-      if (i < len) then
-        Move(path[i+1], path[i], (len-i)*SizeOf(TPointD));
-      SetLength(path, len);
-    end else
-      inc(i);
+      inc(j);
+      Result[j] := path[i];
+    end;
+  SetLength(Result, j +1);
 end;
 //------------------------------------------------------------------------------
 
@@ -631,6 +620,12 @@ function PointsEqual(const p1, p2: TPointD): Boolean;
   {$IFDEF INLINING} inline; {$ENDIF}
 begin
   Result := (p1.X = p2.X) and (p1.Y = p2.Y);
+end;
+//------------------------------------------------------------------------------
+
+function PointsNearEqual(const pt1, pt2: TPointD; distSqrd: double): Boolean;
+begin
+  Result := Sqr(pt1.X - pt2.X) + Sqr(pt1.Y - pt2.Y) < distSqrd;
 end;
 //------------------------------------------------------------------------------
 

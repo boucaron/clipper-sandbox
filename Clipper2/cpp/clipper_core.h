@@ -1,7 +1,7 @@
 /*******************************************************************************
 * Author    :  Angus Johnson                                                   *
 * Version   :  10.0 (beta)                                                     *
-* Date      :  2 November 2020                                                 *
+* Date      :  21 November 2020                                                *
 * Website   :  http://www.angusj.com                                           *
 * Copyright :  Angus Johnson 2010-2020                                         *
 * Purpose   :  Core Clipper Library structures and functions                   *
@@ -99,9 +99,14 @@ struct Point {
 };
 
 template <typename T>
-PointI round(Point<T> p)
+PointI Round(Point<T> p)
 {
 	return PointI(static_cast<cInt>(std::round(p.x)), static_cast<cInt>(std::round(p.y)));
+}
+
+template <typename T>
+inline bool NearEqual(const Point<T> p1, const Point<T> p2, T min_dist_sqrd) {
+	return (p1.x - p2.x) * (p1.x - p2.x) + (p1.y - p2.y) * (p1.y - p2.y) < min_dist_sqrd;
 }
 
 
@@ -231,10 +236,10 @@ struct Path {
 	void Offset(T dx, T dy);
 	bool Orientation() const;
 	void Reverse();
-	void Rotate(const PointD &center, double angle_rad);
+	void Rotate(const PointD &pivot, double angle_rad);
 	void Scale(double sx, double sy);
 	void StripDuplicates();
-	void Trim(double tolerance);
+	void Trim(T min_length);
 
 	template<typename T2>		
 	void AppendPointsScale(const Path<T2> & other, double scale)
@@ -243,7 +248,7 @@ struct Path {
 		if  (std::numeric_limits<T>::is_integer)
 		{
 				for (const auto &p : other.data)
-					data.push_back(Point<T>(round(p*scale)));
+					data.push_back(Point<T>(Round(p*scale)));
 		}
 		else
 		{
@@ -290,7 +295,6 @@ struct Path {
 		}
 
 	}
-
 
 	friend inline Path<T> &operator<<(Path<T> &path, const Point<T> &point) {
 		path.data.push_back(point);
@@ -344,7 +348,7 @@ struct Paths {
 	void Reverse();
 	void Rotate(const PointD &center, double angle_rad);
 	void Scale(double sx, double sy);
-	void Trim(double tolerance);
+	void Trim(T min_length);
 
 	template<typename T2>
 	void AppendPointsScale(const Paths<T2>& other, double scale) {
