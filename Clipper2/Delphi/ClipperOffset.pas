@@ -46,8 +46,8 @@ type
     fTmpLimit    : Double;
     fMiterLimit  : Double;
     fArcTolerance: Double;
-    FMinLenSqrd  : Double;
     FMinEdgeLen  : Double;
+    FMinLenSqrd  : Double;
     fStepsPerRad : Double;
     fNorms       : TPathD;
 {$IFDEF XPLAT_GENERICS}
@@ -69,7 +69,6 @@ type
     procedure DoRound(j, k: integer; angle: double);
     procedure OffsetPoint(j: Integer; var k: integer);
 
-    function CheckPath(const path: TPathD; IsClosedPath: Boolean): TPathD;
     procedure BuildNormals;
     procedure DoOffset(const paths: TPathsD;
       delta: double; joinType: TJoinType; endType: TEndType);
@@ -109,8 +108,8 @@ type
 
   function InflatePaths(const paths: TPathsD;
     delta: Double; jt: TJoinType; et: TEndType;
-    miterLimit: double = 2.0;
-    arcTolerance: double = 0.0): TPathsD; overload;
+    miterLimit: double = 2.0; arcTolerance: double = 0.0;
+    minEdgeLength: double = 0.0): TPathsD; overload;
 
 implementation
 
@@ -210,7 +209,6 @@ begin
   inherited Create;
   fMiterLimit := MiterLimit;
   fArcTolerance := ArcTolerance;
-  FMinEdgeLen := 0.5;
 
 {$IFDEF XPLAT_GENERICS}
   fInGroups     := TList<TPathGroup>.Create;
@@ -263,23 +261,6 @@ begin
 end;
 //------------------------------------------------------------------------------
 
-function TClipperOffset.CheckPath(const path: TPathD;
-  IsClosedPath: Boolean): TPathD;
-var
-  len: Integer;
-begin
-  Result := StripDuplicates(path);
-  if not IsClosedPath then Exit;
-  len := length(Result);
-  if (len > 2) and PointsNearEqual(Result[0], Result[len-1], FMinLenSqrd) then
-  begin
-    dec(len);
-    setlength(Result, len);
-  end;
-  if len < 3 then Result := nil;
-end;
-//------------------------------------------------------------------------------
-
 procedure TClipperOffset.DoOffset(const paths: TPathsD;
   delta: double; joinType: TJoinType; endType: TEndType);
 var
@@ -308,7 +289,7 @@ begin
 
   if fArcTolerance > 0 then
     arcTol := fArcTolerance else
-    arcTol := Log10(2 + absDelta) * 0.25;
+    arcTol := Log10(2 + absDelta) * 0.25; //empirically derived
 
   //calculate a sensible number of steps (for 360 deg for the given offset
   if (joinType = jtRound) or (endType = etRound) then
@@ -322,7 +303,7 @@ begin
   fOutPaths := nil;
   for i := 0 to High(paths) do
   begin
-    fInPath := CheckPath(paths[i], IsClosedPaths);
+    fInPath := StripNearDuplicates(paths[i], FMinEdgeLen, IsClosedPaths);
     if fInPath = nil then Exit;
 
     fNorms := nil;
@@ -498,7 +479,7 @@ begin
     //if delta == 0, just copy paths to Result
     for i := 0 to fInGroups.Count -1 do
       with TPathGroup(fInGroups[i]) do
-          AppendPaths(Result, paths);
+          AppendPaths(fSolution, paths);
     Result := fSolution;
     Exit;
   end;
@@ -508,6 +489,8 @@ begin
     fTmpLimit := 2 / Sqr(fMiterLimit) else
     fTmpLimit := 2.0;
 
+  if FMinEdgeLen < floatingPointTolerance then
+    FMinEdgeLen := defaultMinEdgeLen;
   FMinLenSqrd := FMinEdgeLen * FMinEdgeLen;
 
   //nb: delta will depend on whether paths are polygons or open
@@ -542,7 +525,7 @@ begin
   if fOutPathLen = length(fOutPath) then
     SetLength(fOutPath, fOutPathLen + BuffLength);
   if (fOutPathLen > 0) and
-    PointsEqual(fOutPath[fOutPathLen-1], pt) then Exit;
+    PointsNearEqual(fOutPath[fOutPathLen-1], pt, 0.01) then Exit;
   fOutPath[fOutPathLen] := pt;
   Inc(fOutPathLen);
 end;
@@ -554,7 +537,8 @@ const
 begin
   if fOutPathLen = length(fOutPath) then
     SetLength(fOutPath, fOutPathLen + BuffLength);
-  if (fOutPathLen > 0) and PointsEqual(fOutPath[fOutPathLen-1], pt) then Exit;
+  if (fOutPathLen > 0) and
+    PointsNearEqual(fOutPath[fOutPathLen-1], pt, 0.01) then Exit;
   fOutPath[fOutPathLen] := pt;
   Inc(fOutPathLen);
 end;
@@ -640,7 +624,7 @@ begin
   //cos(A) > 0: angles on both left and right sides > 90 degrees
   sinA := (fNorms[k].X * fNorms[j].Y - fNorms[j].X * fNorms[k].Y);
 
-  if (sinA < 0.005) and (sinA > -0.005) then //very near colinear
+  if (sinA < 0.005) and (sinA > -0.005) then //very near colinear (~1/4 deg.)
   begin
     k := j;
     Exit;
@@ -709,14 +693,18 @@ end;
 
 function InflatePaths(const paths: TPathsD;
   delta: Double; jt: TJoinType; et: TEndType;
-  miterLimit: double; arcTolerance: double): TPathsD;
+  miterLimit: double; arcTolerance: double;
+  minEdgeLength: double): TPathsD;
+var
+  co: TClipperOffset;
 begin
-  with TClipperOffset.Create(miterLimit, arcTolerance) do
+  co := TClipperOffset.Create(miterLimit, arcTolerance);
   try
-    AddPaths(paths, jt, et);
-    Result := Execute(delta);
+    co.AddPaths(paths, jt, et);
+    co.MinEdgeLength := minEdgeLength;
+    Result := co.Execute(delta);
   finally
-    free;
+    co.free;
   end;
 end;
 //------------------------------------------------------------------------------
